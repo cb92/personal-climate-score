@@ -1,0 +1,6 @@
+.DS_Store
+.cache.sqlite
+
+# Ignore csv files
+**/*.csv
+
