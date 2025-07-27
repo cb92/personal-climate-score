@@ -25,7 +25,7 @@ US_STATES = [
 ]
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.LUMEN])
-
+server = app.server
 # Create default Score object for initial values
 default_score = Score()
 
