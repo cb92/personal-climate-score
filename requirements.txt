@@ -1,0 +1,9 @@
+openmeteo-sdk
+pandas
+numpy
+requests
+dash
+dash-bootstrap-components
+plotly
+python-dotenv
+google-generativeai

@@ -1,11 +1,11 @@
-from curses import KEY_SAVE
+##from curses import KEY_SAVE
 from dash import Dash, html, dcc, Input, Output, State, callback
 import dash_bootstrap_components as dbc
 from helper import *
-from retry_requests import retry
+#from retry_requests import retry
 import plotly.graph_objects as go
-from datetime import date
-from dateutil.relativedelta import relativedelta
+#from datetime import date
+#from dateutil.relativedelta import relativedelta
 from plotly.subplots import make_subplots
 import numpy as np
 from dotenv import load_dotenv
@@ -44,6 +44,16 @@ app.layout = html.Div([
             "The results show how well each city matches your preferences, both historically and in future climate projections. Higher scores indicate a better match to your chosen criteria. Use the graphs to explore seasonal patterns, recent air quality history, and the reasons behind each city's score. Remember, this tool is for informational purposes and uses the best available data, but all climate projections have uncertainty.",
             style={'fontSize': '16px', 'lineHeight': '1.6', 'color': '#555', 'marginBottom': '20px'}
         ),
+    html.P(
+        "For more detailed information about how this dashboard works, including data sources, methodology, and troubleshooting tips, please see the README file on GitHub: ",
+        style={'fontSize': '16px', 'lineHeight': '1.6', 'color': '#555', 'marginBottom': '10px', 'display': 'inline'}
+    ),
+    html.A(
+        "View the README",
+        href="https://github.com/cb92/personal-climate-score/blob/main/README.md",
+        target="_blank",
+        style={'fontSize': '16px', 'color': '#007bff', 'textDecoration': 'underline', 'marginLeft': '5px'}
+    ),
     ], style={'margin': '30px', 'padding': '25px', 'border': '1px solid #ddd', 'borderRadius': '8px', 'background': '#f9f9f9'}),
     
     # City input section
