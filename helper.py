@@ -8,8 +8,7 @@ from datetime import date
 from dateutil.relativedelta import relativedelta
 import requests
 import openmeteo_requests
-# import requests_cache
-# from retry_requests import retry
+
 import os
 import hashlib
 import json
@@ -219,18 +218,19 @@ def daily_climate_score__hourly(temperature_arr,
 								score_obj):
 	score = 0
 	reason = "neutral"
-	if (np.max(temperature_arr) > f_to_c(score_obj.humid_day_max) and np.min(dew_point_arr) > f_to_c(70)):
+    #this if/elif loop should logically be disjoint
+	if (np.max(temperature_arr) > f_to_c(score_obj.humid_day_max) and np.min(dew_point_arr) > f_to_c(65)):
 		score = score_obj.humid_day_coef
-		reason = "humid"
+		reason = "too hot, humid"
 	elif (np.max(temperature_arr) > f_to_c(score_obj.dry_heat_day_min) and np.min(dew_point_arr) < f_to_c(55)):
 		score = score_obj.dry_heat_day_coef
-		reason = "dry heat"
+		reason = "too hot, dry"
 	elif (np.max(temperature_arr) < f_to_c(score_obj.too_cold_windy__max) and np.mean(wind_arr) > 30):
 		score = score_obj.too_cold_windy__coef
-		reason = "too cold windy"
+		reason = "too cold, windy"
 	elif (np.max(temperature_arr) < f_to_c(score_obj.too_cold_still__max) and np.mean(wind_arr) < 30):
 		score = score_obj.too_cold_still__coef
-		reason = "too cold still"
+		reason = "too cold, still"
 	elif (np.max(temperature_arr) > f_to_c(score_obj.ideal_temp__min) and np.max(temperature_arr) < f_to_c(score_obj.ideal_temp__max)):
 		if (np.mean(cloud_cover_arr) < 60 and np.sum(rain_arr) < 2):
 			score = score_obj.ideal_sunny_day__coef
@@ -239,21 +239,33 @@ def daily_climate_score__hourly(temperature_arr,
 			score = score_obj.overcast_dry__coef
 			reason = "ideal overcast"
 	# Precipitation overrides
-	if (np.sum(rain_arr) >=2 and np.sum(rain_arr) < 10):
-		prev_score = score
-		score = np.min([score, score_obj.light_rain__coef])
-		if score == score_obj.light_rain__coef or score < prev_score:
-			reason = "light rain"
-	elif (np.sum(rain_arr) >=10):
-		prev_score = score
-		score = np.min([score, score_obj.heavy_rain__coef])
-		if score == score_obj.heavy_rain__coef or score < prev_score:
+	if (np.sum(rain_arr) >= 2 and np.sum(rain_arr) < 10):
+		if reason == 'neutral':
+			score = score_obj.light_rain__coef
+			reason = 'light rain'
+		else:
+			prev_score = score
+			score = np.min([score, score_obj.light_rain__coef])
+			if score == score_obj.light_rain__coef or score < prev_score:
+				reason = "light rain"
+	elif (np.sum(rain_arr) >= 10):
+		if reason == 'neutral':
+			score = score_obj.heavy_rain__coef
 			reason = "heavy rain"
+		else:
+			prev_score = score
+			score = np.min([score, score_obj.heavy_rain__coef])
+			if score == score_obj.heavy_rain__coef or score < prev_score:
+				reason = "heavy rain"
 	elif (np.sum(snowfall_arr) > 1):
-		prev_score = score
-		score = np.min ([score, score_obj.snow_coef])
-		if score == score_obj.snow_coef or score < prev_score:
+		if reason == 'neutral':
+			score = score_obj.snow_coef
 			reason = "snow"
+		else:
+			prev_score = score
+			score = np.min([score, score_obj.snow_coef])
+			if score == score_obj.snow_coef or score < prev_score:
+				reason = "snow"
 	return (score + 2) * 25, reason
 
 def daily_climate_score__daily(temperature_max, 
@@ -266,18 +278,18 @@ def daily_climate_score__daily(temperature_max,
 								score_obj):
 	score = 0
 	reason = "neutral"
-	if (temperature_max > f_to_c(score_obj.humid_day_max) and dew_point_min > f_to_c(70)):
+	if (temperature_max > f_to_c(score_obj.humid_day_max) and dew_point_min > f_to_c(65)):
 		score = score_obj.humid_day_coef
-		reason = "humid"
+		reason = "too hot, humid"
 	elif (temperature_max > f_to_c(score_obj.dry_heat_day_min) and dew_point_min < f_to_c(55)):
 		score = score_obj.dry_heat_day_coef
-		reason = "dry heat"
+		reason = "too hot, dry"
 	elif (temperature_max < f_to_c(score_obj.too_cold_windy__max) and wind_mean > 30):
 		score = score_obj.too_cold_windy__coef
-		reason = "too cold windy"
+		reason = "too cold, windy"
 	elif (temperature_max < f_to_c(score_obj.too_cold_still__max) and wind_mean < 30):
 		score = score_obj.too_cold_still__coef
-		reason = "too cold still"
+		reason = "too cold, still"
 	elif (temperature_max > f_to_c(score_obj.ideal_temp__min) and temperature_max < f_to_c(score_obj.ideal_temp__max)):
 		if (cloud_cover_mean < 60 and scaling_factor*rain_sum < 2):
 			score = score_obj.ideal_sunny_day__coef
@@ -286,22 +298,34 @@ def daily_climate_score__daily(temperature_max,
 			score = score_obj.overcast_dry__coef
 			reason = "ideal overcast"
 	# Precipitation overrides
+    # Precipitation overrides
 	if (scaling_factor*rain_sum >=2 and scaling_factor*rain_sum < 10):
-		prev_score = score
-		score = np.min([score, score_obj.light_rain__coef])
-		if score == score_obj.light_rain__coef or score < prev_score:
-			reason = "light rain"
+		if reason == 'neutral':
+			score = score_obj.light_rain__coef
+			reason = 'light rain'
+		else:
+			prev_score = score
+			score = np.min([score, score_obj.light_rain__coef])
+			if score == score_obj.light_rain__coef or score < prev_score:
+				reason = "light rain"
 	elif (scaling_factor*rain_sum >=10):
-		prev_score = score
-		score = np.min([score, score_obj.heavy_rain__coef])
-		if score == score_obj.heavy_rain__coef or score < prev_score:
+		if reason == 'neutral':
+			score = score_obj.heavy_rain__coef
 			reason = "heavy rain"
+		else:
+			prev_score = score
+			score = np.min([score, score_obj.heavy_rain__coef])
+			if score == score_obj.heavy_rain__coef or score < prev_score:
+				reason = "heavy rain"
 	elif (snowfall_sum > 1):
-		prev_score = score
-		score = np.min([score, score_obj.snow_coef])
-		if score == score_obj.snow_coef or score < prev_score:
+		if reason == 'neutral':
+			score = score_obj.snow_coef
 			reason = "snow"
-    
+		else:
+			prev_score = score
+			score = np.min([score, score_obj.snow_coef])
+			if score == score_obj.snow_coef or score < prev_score:
+				reason = "snow"
 	return (score + 2) * 25, reason
 
 def get_city_info(city, state):
@@ -317,31 +341,36 @@ def get_city_info(city, state):
 
 def get_historical_and_aqi_data(lat, long, city_timezone, city, state, col_names=None, save_csv=True):
     if col_names is None:
-        col_names = ["temperature_2m", "dew_point_2m", "rain", "snowfall", "cloud_cover", "wind_speed_10m"]
-    
+        col_names = [
+            "temperature_2m_max", "dew_point_2m_min", "rain_sum", "snowfall_sum", "cloud_cover_mean", "wind_speed_10m_mean"
+        ]
     # Check cache first
-    cache_filename = get_cache_filename("historical", city, state)
-    cached_df = load_cached_data(cache_filename)
-    if cached_df is not None:
-        print(f"Loading historical data from cache: {cache_filename}")
-        return cached_df, cache_filename
-    
-    print(f"Fetching historical data for {city}, {state} from API...")
+    cache_filename_weather = get_cache_filename("historical_daily", city, state)
+    cache_filename_pm25 = get_cache_filename("historical_pm25", city, state)
+    cached_weather = load_cached_data(cache_filename_weather)
+    cached_pm25 = load_cached_data(cache_filename_pm25)
+    if cached_weather is not None and cached_pm25 is not None:
+        print(f"Loading historical daily weather from cache: {cache_filename_weather}")
+        print(f"Loading historical pm2.5 from cache: {cache_filename_pm25}")
+        return cached_weather, cached_pm25, cache_filename_weather, cache_filename_pm25
+
+    print(f"Fetching historical daily weather for {city}, {state} from API...")
     openmeteo = openmeteo_requests.Client()
 
-    # Historical weather
+    # Historical daily weather
     url = "https://archive-api.open-meteo.com/v1/archive"
     params = {
         "latitude": lat,
         "longitude": long,
-        "start_date": date.today() - relativedelta(years=10),
+        "start_date": date(date.today().year - 10, 1, 2),
         "end_date": date.today(),
-        "hourly": col_names,
+        "daily": col_names,
         "timezone": 'GMT'
     }
     responses = openmeteo.weather_api(url, params=params)
-    df_historical_weather = extract_data_from_api_response(responses[0].Hourly(), col_names)
-    # AQI
+    df_historical_weather = extract_data_from_api_response(responses[0].Daily(), col_names, hourly=False)
+
+    # AQI (pm2.5, hourly)
     url = "https://air-quality-api.open-meteo.com/v1/air-quality"
     aqi_col_names = ["pm2_5"]
     params = {
@@ -354,17 +383,16 @@ def get_historical_and_aqi_data(lat, long, city_timezone, city, state, col_names
     }
     responses = openmeteo.weather_api(url, params=params)
     df_historical_aqi = extract_data_from_api_response(responses[0].Hourly(), aqi_col_names, timezone=city_timezone)
-    df_historical = pd.merge(df_historical_aqi, df_historical_weather, on=['datetime', 'date', 'time'], how='outer')
-    df_historical.sort_values(by='datetime', ascending=True, inplace=True)
-    
+
     # Save to cache
     if save_csv:
-        save_cached_data(df_historical, cache_filename)
+        save_cached_data(df_historical_weather, cache_filename_weather)
+        save_cached_data(df_historical_aqi, cache_filename_pm25)
     else:
-        cache_filename = None
-    
+        cache_filename_weather = None
+        cache_filename_pm25 = None
 
-    return df_historical, cache_filename
+    return df_historical_weather, df_historical_aqi, cache_filename_weather, cache_filename_pm25
 
 
 def get_forecasted_data(lat, long, city_timezone, city, state, model, col_names=None, save_csv=True):
@@ -385,7 +413,7 @@ def get_forecasted_data(lat, long, city_timezone, city, state, model, col_names=
         "latitude": lat,
         "longitude": long,
         "start_date": date.today(),
-        "end_date": date.today() + relativedelta(years=25),
+        "end_date": date(date.today().year + 25, 12, 31),
         "models": model,
         "daily": col_names
     }
@@ -415,42 +443,35 @@ def process_historical_for_plotting(df, climate_score, city=None, state=None):
             # Extract reasons from the cached data (assuming they're stored in a separate column or we can reconstruct them)
             reasons = cached_df["reason"].tolist() if "reason" in cached_df.columns else []
             return cached_df, reasons
-    
-    print("Processing historical data for plotting...")
+
+    print("Processing historical daily data for plotting...")
     df["date"] = df["date"].astype(str)
-    df["time"] = df["time"].astype(str)
-    unique_dates = df["date"].unique()
     scores = []
     reasons = []
-    for date_val in sorted(unique_dates):
-        df_subset = df[
-            (df["date"] == date_val) &
-            (df["time"] >= climate_score.min_time) &
-            (df["time"] <= climate_score.max_time)
-        ]
-        if not df_subset.empty:
-            score, reason = daily_climate_score__hourly(
-                df_subset["temperature_2m__celsius"],
-                df_subset["dew_point_2m__celsius"],
-                df_subset["rain__millimetre"],
-                df_subset["snowfall__centimetre"],
-                df_subset["wind_speed_10m__kilometres_per_hour"],
-                df_subset["cloud_cover__percentage"],
-                climate_score
-            )
-            scores.append((date_val, score, reason))
-            reasons.append(reason)
+    for idx, row in df.iterrows():
+        # Use daily scoring function
+        score, reason = daily_climate_score__daily(
+            row["temperature_2m_max__celsius"],
+            row["dew_point_2m_min__celsius"],
+            row["wind_speed_10m_mean__kilometres_per_hour"],
+            row["cloud_cover_mean__percentage"],
+            row["rain_sum__millimetre"],
+            row["snowfall_sum__centimetre"],
+            climate_score.scaling_factor,
+            climate_score
+        )
+        scores.append((row["date"], score, reason))
+        reasons.append(reason)
     score_df = pd.DataFrame(scores, columns=["date", "score", "reason"])
     score_df["date"] = pd.to_datetime(score_df["date"])
-    score_df["score_30d_ma"] = score_df["score"].rolling(window=30).mean()
     score_df["year"] = score_df["date"].dt.year
-    
+
     # Save to cache if city and state are provided
     if city and state:
         score_params = climate_score.get_all_parameters()
         cache_filename = get_cache_filename("historical_score", city, state, score_params=score_params)
         save_cached_data(score_df, cache_filename)
-    
+
     return score_df, reasons
 
 
@@ -485,7 +506,6 @@ def process_forecasted_for_plotting(df, climate_score, model="NICAM16_8S", city=
         reasons_forecasted.append(reason)
     score_df_forecasted = pd.DataFrame(scores_forecasted, columns=["date", "score", "reason"])
     score_df_forecasted["date"] = pd.to_datetime(score_df_forecasted["date"])
-    score_df_forecasted["score_30d_ma"] = score_df_forecasted["score"].rolling(window=30).mean()
     score_df_forecasted["year"] = score_df_forecasted["date"].dt.year
     
     # Save to cache if city and state are provided
@@ -497,16 +517,163 @@ def process_forecasted_for_plotting(df, climate_score, model="NICAM16_8S", city=
     return score_df_forecasted, reasons_forecasted
 
 
-def get_cache_filename(data_type, city, state, model=None, score_params=None):
+def get_combined_forecasted_data(lat, long, city_timezone, city, state, models=None, col_names=None, save_csv=True):
+    """
+    Fetch forecasted data for multiple models and return a combined dataframe.
+    
+    Args:
+        lat, long: coordinates
+        city_timezone: timezone string
+        city, state: location identifiers
+        models: list of model names to fetch data for
+        col_names: list of column names to fetch
+        save_csv: whether to save to cache
+    
+    Returns:
+        combined_df: DataFrame with date/year columns and model-specific score/reason columns
+        cache_filename: cache filename if saved, None otherwise
+    """
+    if models is None:
+        models = ["EC_Earth3P_HR", "MRI_AGCM3_2_S", "NICAM16_8S"]
+    if col_names is None:
+        col_names = ["temperature_2m_max", "wind_speed_10m_mean", "dew_point_2m_min", "rain_sum", "cloud_cover_mean", "snowfall_sum"]
+    
+    # Check cache first
+    cache_filename = get_cache_filename("combined_forecasted", city, state, models=models)
+    cached_df = load_cached_data(cache_filename)
+    if cached_df is not None:
+        print(f"Loading combined forecasted data from cache: {cache_filename}")
+        return cached_df, cache_filename
+    
+    print(f"Fetching combined forecasted data for {city}, {state} with models {models} from API...")
+    openmeteo = openmeteo_requests.Client()
+    
+    # Fetch data for each model
+    model_dataframes = {}
+    for model in models:
+        url = "https://climate-api.open-meteo.com/v1/climate"
+        params = {
+            "latitude": lat,
+            "longitude": long,
+            "start_date": date.today(),
+            "end_date": date(date.today().year + 25, 12, 31),
+            "models": model,
+            "daily": col_names
+        }
+        responses = openmeteo.weather_api(url, params=params)
+        df_model = extract_data_from_api_response(responses[0].Daily(), col_names, hourly=False, timezone=city_timezone)
+        
+        # Add model suffix to column names (except date)
+        df_model.columns = [
+            col if col == 'date' else col + f'__{model}'
+            for col in df_model.columns
+        ]
+        model_dataframes[model] = df_model
+    
+    # Combine all model dataframes on date
+    combined_df = model_dataframes[models[0]].copy()
+    for model in models[1:]:
+        combined_df = pd.merge(combined_df, model_dataframes[model], on='date', how='outer')
+    
+    # Add year column
+    combined_df['year'] = pd.to_datetime(combined_df['date']).dt.year
+    
+    # Save to cache
+    if save_csv:
+        save_cached_data(combined_df, cache_filename)
+    else:   
+        cache_filename = None
+    
+    return combined_df, cache_filename
+
+
+def process_combined_forecasted_for_plotting(df, climate_score, models=None, city=None, state=None):
+    """
+    Process combined forecasted data for plotting, generating scores for all models.
+    
+    Args:
+        df: combined forecasted dataframe with model-specific columns
+        climate_score: Score object with preferences
+        models: list of model names
+        city, state: location identifiers for caching
+    
+    Returns:
+        processed_df: DataFrame with date, year, and model-specific score/reason columns
+        all_reasons: list of all unique reasons across all models
+    """
+    if models is None:
+        models = ["EC_Earth3P_HR", "MRI_AGCM3_2_S", "NICAM16_8S"]
+    
+    # Check cache first if city and state are provided
+    if city and state:
+        score_params = climate_score.get_all_parameters()
+        cache_filename = get_cache_filename("combined_forecasted_score", city, state, models=models, score_params=score_params)
+        cached_df = load_cached_data(cache_filename)
+        if cached_df is not None:
+            print(f"Loading combined forecasted score data from cache: {cache_filename}")
+            # Extract reasons from the cached data
+            all_reasons = []
+            for model in models:
+                reason_col = f'reason_{model}'
+                if reason_col in cached_df.columns:
+                    all_reasons.extend(cached_df[reason_col].dropna().unique().tolist())
+            all_reasons = list(set(all_reasons))
+            return cached_df, all_reasons
+    
+    print(f"Processing combined forecasted data for plotting with models {models}...")
+    
+    # Initialize result dataframe with date and year
+    result_df = df[['date', 'year']].copy()
+    all_reasons = []
+    
+    # Process each model
+    for model in models:
+        scores_model = []
+        reasons_model = []
+        
+        for idx, row in df.iterrows():
+            # Use daily scoring function for each model
+            score, reason = daily_climate_score__daily(
+                row[f'temperature_2m_max__celsius__{model}'],
+                row[f'dew_point_2m_min__celsius__{model}'],
+                row[f'wind_speed_10m_mean__kilometres_per_hour__{model}'],
+                row[f'cloud_cover_mean__percentage__{model}'],
+                row[f'rain_sum__millimetre__{model}'],
+                row[f'snowfall_sum__centimetre__{model}'],
+                climate_score.scaling_factor,
+                climate_score
+            )
+            scores_model.append(score)
+            reasons_model.append(reason)
+            all_reasons.append(reason)
+        
+        # Add model-specific columns
+        result_df[f'score_{model}'] = scores_model
+        result_df[f'reason_{model}'] = reasons_model
+    
+    # Remove duplicates from all_reasons
+    all_reasons = list(set(all_reasons))
+    
+    # Save to cache if city and state are provided
+    if city and state:
+        score_params = climate_score.get_all_parameters()
+        cache_filename = get_cache_filename("combined_forecasted_score", city, state, models=models, score_params=score_params)
+        save_cached_data(result_df, cache_filename)
+    
+    return result_df, all_reasons
+
+
+def get_cache_filename(data_type, city, state, model=None, score_params=None, models=None):
     """
     Generate cache filename based on data type and parameters.
     
     Args:
-        data_type: 'historical', 'forecasted', 'historical_score', 'forecasted_score'
+        data_type: 'historical_hourly', 'forecasted', 'historical_score', 'forecasted_score', 'historical_daily', 'historical_pm25', 'combined_forecasted', 'combined_forecasted_score'
         city: city name
         state: state name
         model: model name (for forecasted data)
         score_params: score parameters dict (for score data)
+        models: list of model names (for combined forecasted data)
     
     Returns:
         cache filename string
@@ -516,8 +683,12 @@ def get_cache_filename(data_type, city, state, model=None, score_params=None):
     if not os.path.exists(cache_dir):
         os.makedirs(cache_dir)
     
-    if data_type == "historical":
-        return os.path.join(cache_dir, f"{city}_{state}_historical_data.csv")
+    if data_type == "historical_hourly":
+        return os.path.join(cache_dir, f"{city}_{state}_historical_hourly.csv")
+    elif data_type == "historical_daily":
+        return os.path.join(cache_dir, f"{city}_{state}_historical_daily.csv")
+    elif data_type == "historical_pm25":
+        return os.path.join(cache_dir, f"{city}_{state}_historical_pm25.csv")
     elif data_type == "forecasted":
         return os.path.join(cache_dir, f"{city}_{state}_{model}_forecasted_data.csv")
     elif data_type == "historical_score":
@@ -528,6 +699,14 @@ def get_cache_filename(data_type, city, state, model=None, score_params=None):
         # Create hash of score parameters for filename
         score_hash = hashlib.md5(json.dumps(score_params, sort_keys=True).encode()).hexdigest()[:8]
         return os.path.join(cache_dir, f"{city}_{state}_{model}_forecasted_score_{score_hash}.csv")
+    elif data_type == "combined_forecasted":
+        models_str = '_'.join(models) if models else 'all_models'
+        return os.path.join(cache_dir, f"{city}_{state}_{models_str}_combined_forecasted_data.csv")
+    elif data_type == "combined_forecasted_score":
+        # Create hash of score parameters for filename
+        score_hash = hashlib.md5(json.dumps(score_params, sort_keys=True).encode()).hexdigest()[:8]
+        models_str = '_'.join(models) if models else 'all_models'
+        return os.path.join(cache_dir, f"{city}_{state}_{models_str}_combined_forecasted_score_{score_hash}.csv")
     else:
         raise ValueError(f"Unknown data_type: {data_type}")
 

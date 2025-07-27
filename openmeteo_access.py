@@ -1,3 +1,4 @@
+from curses import KEY_SAVE
 from dash import Dash, html, dcc, Input, Output, State, callback
 import dash_bootstrap_components as dbc
 from helper import *
@@ -7,8 +8,11 @@ from datetime import date
 from dateutil.relativedelta import relativedelta
 from plotly.subplots import make_subplots
 import numpy as np
+from dotenv import load_dotenv
 import os
 from google import genai
+
+load_dotenv()
 
 # List of US states (non-abbreviated)
 US_STATES = [
@@ -33,7 +37,11 @@ app.layout = html.Div([
     html.Div([
         html.H3('How to Use'),
         html.P(
-            "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
+            "This dashboard helps you compare the climate and environmental conditions of up to three US cities based on your personal preferences. To use the tool, enter the names and states of the US cities you want to compare, then adjust the sliders and dropdowns to reflect your ideal weather, natural disaster risk tolerance, and other preferences. When ready, click 'Calculate Climate Scores' to generate personalized climate metrics and visualizations for each city.",
+            style={'fontSize': '16px', 'lineHeight': '1.6', 'color': '#555', 'marginBottom': '15px'}
+        ),
+        html.P(
+            "The results show how well each city matches your preferences, both historically and in future climate projections. Higher scores indicate a better match to your chosen criteria. Use the graphs to explore seasonal patterns, recent air quality history, and the reasons behind each city's score. Remember, this tool is for informational purposes and uses the best available data, but all climate projections have uncertainty.",
             style={'fontSize': '16px', 'lineHeight': '1.6', 'color': '#555', 'marginBottom': '20px'}
         ),
     ], style={'margin': '30px', 'padding': '25px', 'border': '1px solid #ddd', 'borderRadius': '8px', 'background': '#f9f9f9'}),
@@ -504,81 +512,118 @@ app.layout = html.Div([
                     style={'marginLeft': '0px', 'width': '500px', 'padding': '12px', 'borderRadius': '6px', 'border': '1px solid #ccc', 'fontSize': '14px'}
                 )
             ]),
-            html.Button('Calculate Climate Scores', id='calculate-btn', n_clicks=0, style={'marginTop': '20px', 'padding': '14px 28px', 'backgroundColor': '#007bff', 'color': 'white', 'border': 'none', 'borderRadius': '6px', 'cursor': 'pointer', 'fontSize': '16px', 'fontWeight': 'bold'}),
-        ], style={'marginTop': '20px', 'marginBottom': '20px', 'padding': '20px', 'border': '1px solid #eee', 'borderRadius': '5px', 'background': '#fafafa'}),
-        html.Div(id='calculation-status', style={'padding': '10px', 'borderRadius': '5px'}),
+            html.Div(
+                "Click the button below to calculate your personal climate score metrics for the cities you've selected. Note that if you choose entirely new location/score combinations that the tool has not seen before, it may take a minute to complete. ",
+                style={'fontSize': '0.95em', 'color': '#555', 'marginBottom': '10px', 'marginTop': '15px'}
+            ),
+            dbc.Button('Calculate Climate Scores', id='calculate-btn', n_clicks=0, style={'marginTop': '10px', 'padding': '14px 28px', 'backgroundColor': '#158cba', 'color': 'white', 'border': 'none', 'borderRadius': '6px', 'cursor': 'pointer', 'fontSize': '16px', 'fontWeight': 'bold'}),
+            html.Div(id='calculation-status', style={'padding': '10px', 'borderRadius': '5px'})
+        ], style={'marginTop': '10px', 'marginBottom': '20px', 'padding': '20px', 'border': '1px solid #eee', 'borderRadius': '5px', 'background': '#fafafa'}),
     ], style={'margin': '30px', 'padding': '30px', 'border': '1px solid #ddd', 'borderRadius': '8px', 'background': 'rgb(120 194 173 / 13%)'}),
 
     # Results section: location-specific Gemini div at the top
     html.Div([
-        html.Div(id='location-gemini-comparison', style={'margin': '30px', 'padding': '25px', 'border': '1px solid #eee', 'borderRadius': '8px', 'background': '#f7faff'}),
-        dcc.Graph(id='city-map', figure={}, style={'margin': '20px 0'}),
-        dcc.Graph(
-            id='score-distribution',
-            figure={
-                'data': [],
-                'layout': go.Layout(
-                    title='Score Distribution by Year',
-                    xaxis={'title': 'Year'},
-                    yaxis={'title': 'Percentage of Days'},
-                    shapes=[]
-                )
-            },
-            style={'margin': '20px 0'}
+        dcc.Loading(
+            id="loading-gemini1",
+            type="dot",
+            children=html.Div(id='location-gemini-comparison', style={'margin': '30px', 'padding': '25px', 'border': '1px solid #eee', 'borderRadius': '8px', 'background': '#f7faff'})
         ),
-        dcc.Graph(
-            id='score-average',
-            figure={
-                'data': [],
-                'layout': go.Layout(
-                    title='Score Average by Year',
-                    xaxis={'title': 'Year'},
-                    yaxis={'title': 'Score Average'},
-                    shapes=[]
-                )
-            },
-            style={'margin': '20px 0'}
+        dcc.Loading(
+            id="loading-map",
+            type="graph",
+            children=dcc.Graph(id='city-map', figure={}, style={'margin': '20px 0'})
         ),
-        dcc.Graph(
-            id='monthly-stacked-scores',
-            figure={
-                'data': [],
-                'layout': go.Layout(
-                    title='Monthly Average Stacked Scores by Year',
-                    xaxis={'title': 'Month'},
-                    yaxis={'title': 'Average Score'},
-                    showlegend=True
-                )
-            },
-            style={'margin': '20px 0'}
+        dcc.Loading(
+            id="loading-graph1",
+            type="graph",
+            children=dcc.Graph(
+                id='score-distribution',
+                figure={
+                    'data': [],
+                    'layout': go.Layout(
+                        title='Score Distribution by Year',
+                        xaxis={'title': 'Year'},
+                        yaxis={'title': 'Percentage of Days'},
+                        shapes=[]
+                    )
+                },
+                style={'margin': '20px 0'}
+            ),
         ),
-        dcc.Graph(
-            id='reason-distribution',
-            figure={
-                'data': [],
-                'layout': go.Layout(
-                    title='Number of Days by Type (Reason) per Year',
-                    xaxis={'title': 'Year'},
-                    yaxis={'title': 'Number of Days'},
-                    shapes=[]
-                )
-            },
-            style={'margin': '20px 0'}
+        dcc.Loading(
+            id="loading-graph2",
+            type="graph",
+            children=dcc.Graph(
+                id='score-average',
+                figure={
+                    'data': [],
+                    'layout': go.Layout(
+                        title='Score Average by Year',
+                        xaxis={'title': 'Year'},
+                        yaxis={'title': 'Score Average'},
+                        shapes=[]
+                    )
+                },
+                style={'margin': '20px 0'}
+            )
         ),
-        dcc.Graph(
-            id='pm25-chart',
-            figure={
-                'data': [],
-                'layout': go.Layout(
-                    title='PM2.5 Air Quality Distribution by Year',
-                    xaxis={'title': 'Year'},
-                    yaxis={'title': 'Percentage of Hours'},
-                    showlegend=True
-                )
-            },
-            style={'margin': '20px 0'}
+
+        dcc.Loading(
+            id="loading-graph3",
+            type="graph",
+            children=dcc.Graph(
+                id='monthly-stacked-scores',
+                figure={
+                    'data': [],
+                    'layout': go.Layout(
+                        title='Monthly Average Stacked Scores by Year',
+                        xaxis={'title': 'Month'},
+                        yaxis={'title': 'Average Score'},
+                        showlegend=True
+                    )
+                },
+                style={'margin': '20px 0'}
+            )
         ),
-        html.Div(id='gemini-suggestions', style={'margin': '30px', 'padding': '25px', 'border': '1px solid #eee', 'borderRadius': '8px', 'background': '#fafaff'}),
+        dcc.Loading(
+            id="loading-graph4",
+            type="graph",
+            children=dcc.Graph(
+                id='reason-distribution',
+                figure={
+                    'data': [],
+                    'layout': go.Layout(
+                        title='Number of Days by Type (Reason) per Year',
+                        xaxis={'title': 'Year'},
+                        yaxis={'title': 'Number of Days'},
+                        shapes=[]
+                    )
+                },
+                style={'margin': '20px 0'}
+            )
+        ),
+        dcc.Loading(
+            id="loading-graph5",
+            type="graph",
+            children=dcc.Graph(
+                id='pm25-chart',
+                figure={
+                    'data': [],
+                    'layout': go.Layout(
+                        title='PM2.5 Air Quality Distribution by Year',
+                        xaxis={'title': 'Year'},
+                        yaxis={'title': 'Percentage of Hours'},
+                        showlegend=True
+                    )
+                },
+                style={'margin': '20px 0'}
+            )
+        ),
+        dcc.Loading(
+            id="loading-gemini2",
+            type="dot",
+            children=html.Div(id='gemini-suggestions', style={'margin': '30px', 'padding': '25px', 'border': '1px solid #eee', 'borderRadius': '8px', 'background': '#fafaff'})
+        ),
     ], style={'margin': '30px', 'padding': '20px'}),
     
     # Footer
@@ -632,55 +677,40 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
                   flooding_risk, wildfire_risk, smoke_risk, earthquake_risk, hurricane_risk, tornado_risk,
                   additional_preferences):
     
+    # If first load, use default values for all inputs
+    
     if n_clicks == 0:
-        empty_figure = {
-            'data': [],
-            'layout': go.Layout(
-                title='Score Distribution by Year',
-                xaxis={'title': 'Year'},
-                yaxis={'title': 'Percentage of Days'},
-                shapes=[]
-            )
-        }
-        empty_average_figure = {
-            'data': [],
-            'layout': go.Layout(
-                title='Score Average by Year',
-                xaxis={'title': 'Year'},
-                yaxis={'title': 'Score Average'},
-                shapes=[]
-            )
-        }
-        empty_pm25_figure = {
-            'data': [],
-            'layout': go.Layout(
-                title='PM2.5 Air Quality Distribution by Year',
-                xaxis={'title': 'Year'},
-                yaxis={'title': 'Percentage of Hours'},
-                showlegend=True
-            )
-        }
-        empty_reason_figure = {
-            'data': [],
-            'layout': go.Layout(
-                title='Number of Days by Type (Reason) per Year',
-                xaxis={'title': 'Year'},
-                yaxis={'title': 'Number of Days'},
-                shapes=[]
-            )
-        }
-        empty_monthly_stacked_figure = {
-            'data': [],
-            'layout': go.Layout(
-                title='Monthly Average Stacked Scores by Year',
-                xaxis={'title': 'Month'},
-                yaxis={'title': 'Average Score'},
-                showlegend=True
-            )
-        }
-        empty_map_figure = {'data': [], 'layout': go.Layout(title='Selected Cities Map')}
-        empty_location_gemini = html.Div()
-        return empty_figure, empty_average_figure, empty_pm25_figure, empty_reason_figure, empty_monthly_stacked_figure, empty_map_figure, "Click 'Calculate Climate Scores' to generate charts", "", empty_location_gemini
+        city1 = 'Phoenix'
+        state1 = 'Arizona'
+        include1 = ['include']
+        city2 = 'Portland'
+        state2 = 'Oregon'
+        include2 = ['include']
+        city3 = 'Boston'
+        state3 = 'Massachusetts'
+        include3 = ['include']
+        ideal_temp_range = [default_score.ideal_temp__min, default_score.ideal_temp__max]
+        time_window_range = [8, 20]
+        sunny_day_coef = default_score.ideal_sunny_day__coef
+        too_cold_still_temp = default_score.too_cold_still__max
+        too_cold_still_coef = default_score.too_cold_still__coef
+        too_cold_windy_temp = default_score.too_cold_windy__max
+        too_cold_windy_coef = default_score.too_cold_windy__coef
+        humid_day_max = default_score.humid_day_max
+        humid_day_coef = default_score.humid_day_coef
+        light_rain_coef = default_score.light_rain__coef
+        heavy_rain_coef = default_score.heavy_rain__coef
+        snow_coef = default_score.snow_coef
+        overcast_coef = default_score.overcast_dry__coef
+        dry_heat_min = default_score.dry_heat_day_min
+        dry_heat_coef = default_score.dry_heat_day_coef
+        flooding_risk = 'ok'
+        wildfire_risk = 'ok'
+        smoke_risk = 'ok'
+        earthquake_risk = 'ok'
+        hurricane_risk = 'ok'
+        tornado_risk = 'ok'
+        additional_preferences = ''
 
     # Build city/state list using checkboxes
     city_states = []
@@ -737,6 +767,7 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
         for city, state in city_states:
             try:
                 loc_prompt = build_gemini_location_prompt(city, state, additional_preferences, disaster_preferences)
+                client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
                 loc_response = client.models.generate_content(
                     model="gemini-2.0-flash",
                     contents=loc_prompt,
@@ -768,65 +799,135 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
     monthly_stacked_subplots = []
     status_msgs = []
     subplot_titles = []
+    show_legend = False
 
+    j = 1
     for city, state in city_states:
+        show_legend = j == len(city_states)
+        j += 1
         try:
             lat, lon, timezone, pop = get_city_info(city, state)
             lats.append(lat)
             lons.append(lon)
             labels.append(f"{city}, {state}")
             # Use cache-aware versions of the data retrieval and scoring functions
-            historical_df, _ = get_historical_and_aqi_data(lat, lon, timezone, city, state)
+            historical_daily_df, pm25_df, _, _ = get_historical_and_aqi_data(lat, lon, timezone, city, state)
             forecasted_df, _ = get_forecasted_data(lat, lon, timezone, city, state, model='NICAM16_8S')
+            # --- Combined forecasted data (all models) ---
+            combined_forecasted_df, _ = get_combined_forecasted_data(
+                lat, lon, timezone, city, state,
+                models=["EC_Earth3P_HR", "MRI_AGCM3_2_S", "NICAM16_8S"]
+            )
             scored_historical_df, reasons_historical = process_historical_for_plotting(
-                historical_df, climate_score, city=city, state=state
+                historical_daily_df, climate_score, city=city, state=state
             )
             scored_forecasted_df, reasons_forecasted = process_forecasted_for_plotting(
                 forecasted_df, climate_score, model='NICAM16_8S', city=city, state=state
             )
-            # Combine historical and forecasted data with source indicator
-            scored_historical_df['source'] = 'historical'
-            scored_forecasted_df['source'] = 'forecasted'
-            
-            # Union the dataframes
-            combined_df = pd.concat([scored_historical_df, scored_forecasted_df], ignore_index=True)
+            scored_combined_forecasted_df, reasons_combined_forecasted = process_combined_forecasted_for_plotting(
+                combined_forecasted_df, climate_score,
+                models=["EC_Earth3P_HR", "MRI_AGCM3_2_S", "NICAM16_8S"],
+                city=city, state=state
+            )
+
+            # TODO: Remove non-combined forecasted_df and scored_forecasted_df usage in favor of scored_combined_forecasted_df
+
+            min_forecasted_date = None
+            if not scored_combined_forecasted_df.empty:
+                min_forecasted_date = scored_combined_forecasted_df["date"].min()
+            if min_forecasted_date is not None and hasattr(min_forecasted_date, 'year'):
+                min_forecasted_year = min_forecasted_date.year
+            else:
+                min_forecasted_year = scored_historical_df['year'].max()
+
+            max_historical_date = None
+            if not scored_historical_df.empty:
+                max_historical_date = scored_historical_df["date"].max()
+            if max_historical_date is not None and hasattr(max_historical_date, 'year'):
+                max_historical_year = max_historical_date.year
+            else:
+                max_historical_year = scored_historical_df['year'].max()
+
+            # If the last year of historical == first year of forecasted, move forecasted records for that year to historical
+            if max_historical_year == min_forecasted_year:
+                # Move score records: remove the shared year from both dfs and put them into a third df
+                mask_historical = scored_historical_df['year'] == min_forecasted_year
+                mask_forecasted = scored_forecasted_df['year'] == min_forecasted_year
+                scored_combo_df = pd.DataFrame()
+                if mask_historical.any() or mask_forecasted.any():
+                    # Combine the rows from both dfs for the shared year
+                    scored_combo_df = pd.concat([
+                        scored_historical_df[mask_historical],
+                        scored_forecasted_df[mask_forecasted]
+                    ], ignore_index=True)
+                    # Remove those rows from the original dfs
+                    scored_historical_df = scored_historical_df[~mask_historical]
+                    scored_forecasted_df = scored_forecasted_df[~mask_forecasted]
+                else:
+                    scored_combo_df = pd.DataFrame()
+                scored_historical_df = pd.concat([scored_historical_df, scored_combo_df])
             
             # --- Score Distribution ---
-            score_percents = {}
+            score_percents_historical = {}
+            score_percents_forecasted = {}
             for score_val in [0, 25, 50, 75, 100]:
-                score_percents[score_val] = combined_df[combined_df['score'] == score_val].groupby('year').size() / combined_df.groupby('year').size()
+                score_percent = scored_historical_df[scored_historical_df['score'] == score_val].groupby('year').size() / scored_historical_df.groupby('year').size()
+                score_percents_historical[score_val] = 100*score_percent.fillna(0)
+                score_percent = scored_forecasted_df[scored_forecasted_df['score'] == score_val].groupby('year').size() / scored_forecasted_df.groupby('year').size()
+                score_percents_forecasted[score_val] = 100*score_percent.fillna(0)
             
-            min_forecasted_date = None
-            if not scored_forecasted_df.empty:
-                min_forecasted_date = scored_forecasted_df["date"].min()
-            if min_forecasted_date is not None and hasattr(min_forecasted_date, 'year'):
-                forecasted_year = min_forecasted_date.year
-            else:
-                forecasted_year = scored_historical_df['year'].max()
             
             score_traces = []
-            for score_val, color in zip([0, 25, 50, 75, 100], ['red', 'orange', 'yellow', 'green', 'blue']):
+            for score_val, color, score_name in zip([0, 25, 50, 75, 100], ['#ba1535', '#ba6715', '#b7ba15', '#43ba15', '#158cba'], ['Hate', 'Dislike', 'Neutral', 'Like', 'Love']): 
                 score_traces.append(
                     go.Bar(
-                        x=score_percents[score_val].index,
-                        y=score_percents[score_val].values,
-                        name=f'Score {score_val}',
+                        x=score_percents_historical[score_val].index,
+                        y=score_percents_historical[score_val].values,
+                        name=score_name,
                         marker_color=color,
-                        #opacity=opacity_value,
-                        showlegend=False,
+                        showlegend=show_legend,
+                        legendgroup = score_name
                     )
                 )
-            score_subplots.append((score_traces, forecasted_year, f"{city}, {state}"))
+                score_traces.append(
+                    go.Bar(
+                        x=score_percents_forecasted[score_val].index,
+                        y=score_percents_forecasted[score_val].values,
+                        name=score_name,
+                        marker_color=color,
+                        opacity=0.7,
+                        showlegend=False,
+                        legendgroup = score_name
+                    )
+                )
+            score_subplots.append((score_traces, min_forecasted_year, f"{city}, {state}"))
             # --- Score Average ---
             avg_score_historical = scored_historical_df.groupby('year')['score'].mean()
             avg_score_forecasted = scored_forecasted_df.groupby('year')['score'].mean()
+
             average_traces = [
-                go.Scatter(x=avg_score_historical.index, y=avg_score_historical.values, mode='lines+markers', name='Historical', line=dict(color='blue', width=2), showlegend=False),
-                go.Scatter(x=avg_score_forecasted.index, y=avg_score_forecasted.values, mode='lines+markers', name='Forecasted', line=dict(color='red', width=2), showlegend=False)
+                go.Scatter(
+                    x=avg_score_historical.index, 
+                    y=avg_score_historical.values, 
+                    mode='lines', 
+                    name='Historical', 
+                    line=dict(color='#158cba', width=2),
+                    showlegend=show_legend, 
+                    legendgroup = 'avg_graphs__h'
+                ),
+                go.Scatter(
+                    x=avg_score_forecasted.index, 
+                    y=avg_score_forecasted.values, 
+                    mode='lines', 
+                    name='Forecasted', 
+                    line=dict(color='#ba1535', width=2), 
+                    showlegend=show_legend,
+                    legendgroup = 'avg_graphs__f'
+                )
             ]
             average_subplots.append((average_traces, f"{city}, {state}"))
             # --- PM2.5 ---
-            historical_df['year'] = pd.to_datetime(historical_df['date']).dt.year
+            pm25_df['year'] = pd.to_datetime(pm25_df['date']).dt.year
             pm25_categories = {
                 'Healthy': (0, 12),
                 'Moderate': (12, 35.5),
@@ -837,11 +938,11 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
             pm25_data = {}
             for category, (min_val, max_val) in pm25_categories.items():
                 if max_val == float('inf'):
-                    mask = (historical_df['pm2_5__micrograms_per_cubic_metre'] >= min_val) & (historical_df['pm2_5__micrograms_per_cubic_metre'].notna())
+                    mask = (pm25_df['pm2_5__micrograms_per_cubic_metre'] >= min_val) & (pm25_df['pm2_5__micrograms_per_cubic_metre'].notna())
                 else:
-                    mask = (historical_df['pm2_5__micrograms_per_cubic_metre'] >= min_val) & (historical_df['pm2_5__micrograms_per_cubic_metre'] < max_val) & (historical_df['pm2_5__micrograms_per_cubic_metre'].notna())
-                yearly_counts = historical_df[mask].groupby('year').size()
-                total_hours_per_year = historical_df[historical_df['pm2_5__micrograms_per_cubic_metre'].notna()].groupby('year').size()
+                    mask = (pm25_df['pm2_5__micrograms_per_cubic_metre'] >= min_val) & (pm25_df['pm2_5__micrograms_per_cubic_metre'] < max_val) & (pm25_df['pm2_5__micrograms_per_cubic_metre'].notna())
+                yearly_counts = pm25_df[mask].groupby('year').size()
+                total_hours_per_year = pm25_df[pm25_df['pm2_5__micrograms_per_cubic_metre'].notna()].groupby('year').size()
                 pm25_data[category] = (yearly_counts / total_hours_per_year * 100)
 
             pm25_traces = []
@@ -852,8 +953,8 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
                         y=pm25_data[category].values,
                         name=category,
                         marker_color=color,
-                        #opacity=opacity_value,
-                        showlegend=False,
+                        showlegend=show_legend,
+                        legendgroup = category
                     )
                 )
             pm25_subplots.append((pm25_traces, f"{city}, {state}"))
@@ -863,35 +964,70 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
             reason_counts_forecasted = {reason: scored_forecasted_df[scored_forecasted_df['reason'] == reason].groupby('year').size() for reason in all_reasons}
             
             # Define theme colors for consistent coloring
-            theme_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
-            
+            reason_to_color = {
+                "neutral": "#158cba",
+                "too hot, humid": "#3f15ba",
+                "too hot, dry": "#7a15ba",
+                "too cold, windy": "#ba15a1",
+                "too cold, still": "#ba1535",
+                "ideal sunny": "#ba6715",
+                "ideal overcast": "#b7ba15",
+                "light rain": "#43ba15",
+                "heavy rain": "#15ba67",
+                "snow": "#15b7ba"
+            }            
             reason_traces = []
-            for i, reason in enumerate(all_reasons):
-                color = theme_colors[i % len(theme_colors)]
-                # Historical trace
-                reason_traces.append(
-                    go.Scatter(
-                        x=reason_counts_historical[reason].index, 
-                        y=reason_counts_historical[reason].values, 
-                        mode='lines+markers', 
-                        name=f'{reason} (Hist)', 
-                        line=dict(dash='solid', color=color), 
-                        marker=dict(color=color),
-                        showlegend=False
+            for reason, color in reason_to_color.items():
+                added_trace = False  # Track whether we’ve added at least one visible trace
+
+                # Historical trace (solid line)
+                hist_data = reason_counts_historical.get(reason)
+                if hist_data is not None and not hist_data.empty:
+                    reason_traces.append(
+                        go.Scatter(
+                            x=hist_data.index,
+                            y=hist_data.values,
+                            mode='lines',
+                            name=reason,
+                            line=dict(dash='solid', color=color),
+                            marker=dict(color=color),
+                            showlegend=show_legend, 
+                            legendgroup = reason
+                        )
                     )
-                )
-                # Forecasted trace (same color, different dash)
-                reason_traces.append(
-                    go.Scatter(
-                        x=reason_counts_forecasted[reason].index, 
-                        y=reason_counts_forecasted[reason].values, 
-                        mode='lines+markers', 
-                        name=f'{reason} (Forecast)', 
-                        line=dict(dash='dot', color=color), 
-                        marker=dict(color=color),
-                        showlegend=False
+                    added_trace = True
+
+                # Forecasted trace (dotted line)
+                forecast_data = reason_counts_forecasted.get(reason)
+                if forecast_data is not None and not forecast_data.empty:
+                    reason_traces.append(
+                        go.Scatter(
+                            x=forecast_data.index,
+                            y=forecast_data.values,
+                            mode='lines',
+                            name=reason,
+                            line=dict(dash='dot', color=color),
+                            marker=dict(color=color),
+                            showlegend=not added_trace and show_legend,  # Only show legend if no historical
+                            legendgroup = reason
+                        )
                     )
-                )
+                    added_trace = True
+
+                # If no data at all, add a dummy invisible trace to lock in the color
+                if not added_trace:
+                    reason_traces.append(
+                        go.Scatter(
+                            x=[None],
+                            y=[None],
+                            mode='lines',
+                            name=reason,
+                            line=dict(dash='solid', color=color),
+                            marker=dict(color=color),
+                            showlegend=show_legend,
+                            legendgroup = reason
+                        )
+                    )
             reason_subplots.append((reason_traces, f"{city}, {state}"))
             # --- Monthly Stacked ---
             scored_historical_df['month'] = scored_historical_df['date'].dt.month
@@ -904,7 +1040,7 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
                 year_data = monthly_avg_hist[monthly_avg_hist['year'] == year]
                 fade = 0.2 + 0.8 * (i + 1) / n_hist
                 hist_traces.append(
-                    go.Scatter(x=year_data['month'], y=year_data['score'], mode='lines', name=f'Hist {year}', line=dict(color=f'rgba(0,0,255,{fade})', width=2), showlegend=False)
+                    go.Scatter(x=year_data['month'], y=year_data['score'], mode='lines', name=f'{year}', line=dict(color=f'rgba(21, 140, 186,{fade})', width=2), showlegend=show_legend, legendgroup = f'{year}')
                 )
             monthly_avg_fore = scored_forecasted_df.groupby(['year', 'month'])['score'].mean().reset_index()
             years_fore = sorted(monthly_avg_fore['year'].unique())
@@ -912,9 +1048,9 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
             fore_traces = []
             for i, year in enumerate(years_fore):
                 year_data = monthly_avg_fore[monthly_avg_fore['year'] == year]
-                fade = 0.2 + 0.8 * (i + 1) / n_fore
+                fade = 0.2 + 0.8 * (n_fore - i) / n_fore
                 fore_traces.append(
-                    go.Scatter(x=year_data['month'], y=year_data['score'], mode='lines', name=f'Forecast {year}', line=dict(color=f'rgba(255,0,128,{fade})', width=2), showlegend=False)
+                    go.Scatter(x=year_data['month'], y=year_data['score'], mode='lines', name=f'{year}', line=dict(color=f'rgba(186, 21, 53,{fade})', width=2), showlegend=show_legend, legendgroup = f'{year}')
                 )
             monthly_stacked_subplots.append((hist_traces + fore_traces, f"{city}, {state}"))
             status_msgs.append(f"{city}, {state}: Data retrieved successfully")
@@ -934,45 +1070,126 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
     subplot_titles = [f"{city}, {state}" for city, state in city_states]
 
     score_fig = make_subplots(rows=1, cols=n_cities, subplot_titles=subplot_titles)
-    for i, (traces, forecasted_year, label) in enumerate(score_subplots):
+    for i, (traces, min_forecasted_year, label) in enumerate(score_subplots):
         for trace in traces:
             score_fig.add_trace(trace, row=1, col=i+1)
         score_fig.add_shape(
-            dict(type='line', x0=forecasted_year, x1=forecasted_year, y0=0, y1=1, yref='paper', line={'dash': 'dash', 'color': 'black'}),
+            dict(type='line', x0=min_forecasted_year, x1=min_forecasted_year, y0=0, y1=100, yref='paper', line={'dash': 'dash', 'color': 'black'}),
             row=1, col=i+1
         )
-    score_fig.update_layout(title='Score Distribution by Year', barmode='stack')
+        score_fig.update_layout(legend_tracegroupgap=2)
+    score_fig.update_layout(
+        title='Score Distribution by Year', 
+        barmode='stack'
+    )
+    # Apply x/y axis titles to all subplots
+    for i in range(1, n_cities + 1):
+        xaxis_name = 'xaxis' if i == 1 else f'xaxis{i}'
+        yaxis_name = 'yaxis' if i == 1 else f'yaxis{i}'
+        score_fig.update_layout({
+            xaxis_name: {'title': 'Year'},
+            yaxis_name: {'title': 'Percentage of Days'} if i == 1 else {},
+        })
+    score_fig.update_layout(legend_tracegroupgap=2)
+
     # Score Average
     avg_fig = make_subplots(rows=1, cols=n_cities, subplot_titles=subplot_titles)
     for i, (traces, label) in enumerate(average_subplots):
         for trace in traces:
             avg_fig.add_trace(trace, row=1, col=i+1)
-    avg_fig.update_layout(title='Score Average by Year')
+        avg_fig.add_shape(
+            dict(type='line', x0=min_forecasted_year, x1=min_forecasted_year, y0=50, y1=90, yref='paper', line={'dash': 'dash', 'color': 'black'}),
+            row=1, col=i+1
+        )
+    avg_fig.update_layout(
+        title='Score Average by Year'
+    )
+    for i in range(1, n_cities + 1):
+        xaxis_name = 'xaxis' if i == 1 else f'xaxis{i}'
+        yaxis_name = 'yaxis' if i == 1 else f'yaxis{i}'
+        avg_fig.update_layout({
+            xaxis_name: {'title': 'Year'},
+            yaxis_name: {'title': 'Score Average'} if i == 1 else {},
+        })
+    avg_fig.update_layout(legend_tracegroupgap=2)
+
     # PM2.5
     pm25_fig = make_subplots(rows=1, cols=n_cities, subplot_titles=subplot_titles)
     for i, (traces, label) in enumerate(pm25_subplots):
         for trace in traces:
             pm25_fig.add_trace(trace, row=1, col=i+1)
-    pm25_fig.update_layout(title='PM2.5 Air Quality Distribution by Year', barmode='stack')
+    pm25_fig.update_layout(
+        title='PM2.5 Air Quality Distribution by Year', 
+        barmode='stack'
+    )
+    for i in range(1, n_cities + 1):
+        xaxis_name = 'xaxis' if i == 1 else f'xaxis{i}'
+        yaxis_name = 'yaxis' if i == 1 else f'yaxis{i}'
+        pm25_fig.update_layout({
+            xaxis_name: {'title': 'Year'},
+            yaxis_name: {'title': 'Percentage of Hours'} if i == 1 else {},
+        })
+    pm25_fig.update_layout(legend_tracegroupgap=2)
+
     # Reason Distribution
     reason_fig = make_subplots(rows=1, cols=n_cities, subplot_titles=subplot_titles)
     for i, (traces, label) in enumerate(reason_subplots):
         for trace in traces:
             reason_fig.add_trace(trace, row=1, col=i+1)
-    reason_fig.update_layout(title='Number of Days by Type (Reason) per Year')
+        reason_fig.add_shape(
+            dict(type='line', x0=min_forecasted_year, x1=min_forecasted_year, y0=0, y1=200, yref='paper', line={'dash': 'dash', 'color': 'black'}),
+            row=1, col=i+1
+        )
+    reason_fig.update_layout(
+        title='Number of Days by Type (Reason) per Year'
+    )
+    for i in range(1, n_cities + 1):
+        xaxis_name = 'xaxis' if i == 1 else f'xaxis{i}'
+        yaxis_name = 'yaxis' if i == 1 else f'yaxis{i}'
+        reason_fig.update_layout({
+            xaxis_name: {'title': 'Year'},
+            yaxis_name: {'title': 'Number of Days'} if i == 1 else {},
+        })
+    reason_fig.update_layout(legend_tracegroupgap=2)
+
     # Monthly Stacked
     monthly_fig = make_subplots(rows=1, cols=n_cities, subplot_titles=subplot_titles)
     for i, (traces, label) in enumerate(monthly_stacked_subplots):
         for trace in traces:
             monthly_fig.add_trace(trace, row=1, col=i+1)
-    monthly_fig.update_layout(title='Monthly Average Stacked Scores by Year')
+        monthly_fig.add_shape(
+            dict(type='line', x0=5, x1=5, y0=0, y1=100, yref='paper', line={'dash': 'dash', 'color': 'rgba(0, 0, 0, 0)'}),
+            row=1, col=i+1
+        )
+    monthly_fig.update_layout(
+        title='Monthly Average Stacked Scores by Year'
+    )
+    for i in range(1, n_cities + 1):
+        xaxis_name = 'xaxis' if i == 1 else f'xaxis{i}'
+        yaxis_name = 'yaxis' if i == 1 else f'yaxis{i}'
+        monthly_fig.update_layout({
+            xaxis_name: {
+                'title': 'Month',
+                'tickmode':'array',
+                'tickvals':list(range(1, 13)),
+                'ticktext':["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            },
+            yaxis_name: {'title': 'Average Score'} if i == 1 else {},
+        })
+    monthly_fig.update_layout(legend_tracegroupgap=2)
+    
+    monthly_fig.update_layout(
+        yaxis_title="Your Y-Axis Label"
+    )
+
 
     # Build the map
     map_trace = go.Scattermap(
         lat=lats,
         lon=lons,
         mode='markers+text',
-        marker=go.scattermap.Marker(size=14, color='blue'),
+        marker=go.scattermap.Marker(size=14, color='#158cba'),
         text=labels,
         textposition='top right',
     )
