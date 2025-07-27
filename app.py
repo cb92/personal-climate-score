@@ -1,11 +1,7 @@
-##from curses import KEY_SAVE
 from dash import Dash, html, dcc, Input, Output, State, callback
 import dash_bootstrap_components as dbc
 from helper import *
-#from retry_requests import retry
 import plotly.graph_objects as go
-#from datetime import date
-#from dateutil.relativedelta import relativedelta
 from plotly.subplots import make_subplots
 import numpy as np
 from dotenv import load_dotenv
@@ -25,6 +21,7 @@ US_STATES = [
 ]
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.LUMEN])
+app.title = "Personalized Climate Score"
 server = app.server
 # Create default Score object for initial values
 default_score = Score()
@@ -45,11 +42,11 @@ app.layout = html.Div([
             style={'fontSize': '16px', 'lineHeight': '1.6', 'color': '#555', 'marginBottom': '20px'}
         ),
     html.P(
-        "For more detailed information about how this dashboard works, including data sources, methodology, and troubleshooting tips, please see the README file on GitHub: ",
+        "For more detailed information about how this dashboard works, including data sources, methodology, and troubleshooting tips, please see the ",
         style={'fontSize': '16px', 'lineHeight': '1.6', 'color': '#555', 'marginBottom': '10px', 'display': 'inline'}
     ),
     html.A(
-        "View the README",
+        "README file on Github",
         href="https://github.com/cb92/personal-climate-score/blob/main/README.md",
         target="_blank",
         style={'fontSize': '16px', 'color': '#007bff', 'textDecoration': 'underline', 'marginLeft': '5px'}
