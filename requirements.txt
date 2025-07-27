@@ -1,5 +1,5 @@
 openmeteo-sdk
-openmeteo_requests
+openmeteo-requests
 pandas
 numpy
 requests
