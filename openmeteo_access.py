@@ -1,7 +1,11 @@
+from curses import KEY_SAVE
 from dash import Dash, html, dcc, Input, Output, State, callback
 import dash_bootstrap_components as dbc
 from helper import *
+from retry_requests import retry
 import plotly.graph_objects as go
+from datetime import date
+from dateutil.relativedelta import relativedelta
 from plotly.subplots import make_subplots
 import numpy as np
 from dotenv import load_dotenv
@@ -632,9 +636,9 @@ app.layout = html.Div([
 @callback(
     [Output('score-distribution', 'figure'),
      Output('score-average', 'figure'),
-     Output('pm25-chart', 'figure'),
-     Output('reason-distribution', 'figure'),
      Output('monthly-stacked-scores', 'figure'),
+     Output('reason-distribution', 'figure'),
+     Output('pm25-chart', 'figure'),     
      Output('city-map', 'figure'),
      Output('calculation-status', 'children'),
      Output('gemini-suggestions', 'children'),
@@ -807,7 +811,8 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
             lons.append(lon)
             labels.append(f"{city}, {state}")
             # Use cache-aware versions of the data retrieval and scoring functions
-            historical_daily_df, pm25_df, _, _ = get_historical_and_aqi_data(lat, lon, timezone, city, state)            # --- Combined forecasted data (all models) ---
+            historical_daily_df, pm25_df, _, _ = get_historical_and_aqi_data(lat, lon, timezone, city, state)  
+            # --- Combined forecasted data (all models) ---
             combined_forecasted_df, _ = get_combined_forecasted_data(
                 lat, lon, timezone, city, state,
                 models=["EC_Earth3P_HR", "MRI_AGCM3_2_S", "NICAM16_8S"]
@@ -820,6 +825,13 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
                 models=["EC_Earth3P_HR", "MRI_AGCM3_2_S", "NICAM16_8S"],
                 city=city, state=state
             )
+
+            # Safely cast the date columns to datetime for both dataframes
+            if 'date' in scored_historical_df.columns:
+                scored_historical_df['date'] = pd.to_datetime(scored_historical_df['date'], errors='coerce')
+            if 'date' in scored_combined_forecasted_df.columns:
+                scored_combined_forecasted_df['date'] = pd.to_datetime(scored_combined_forecasted_df['date'], errors='coerce')
+            
 
             min_forecasted_date = None
             if not scored_combined_forecasted_df.empty:
@@ -843,7 +855,7 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
                 num_days_shared_historical = scored_historical_df[scored_historical_df['year'] == shared_year]['date'].nunique()
                 num_days_shared_forecasted = scored_combined_forecasted_df[scored_combined_forecasted_df['year'] == shared_year]['date'].nunique()
                 
-            
+
             # --- Score Distribution ---
             score_percents_historical = {}
             score_percents_combined_forecasted = {}
@@ -868,7 +880,6 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
                 else:
                     combined = pd.Series(dtype=float)
                 score_percents_combined_forecasted[score_val] = combined
-            
             
             score_traces = []
             for score_val, color, score_name in zip([0, 25, 50, 75, 100], ['#ba1535', '#ba6715', '#b7ba15', '#43ba15', '#158cba'], ['Hate', 'Dislike', 'Neutral', 'Like', 'Love']): 
@@ -986,7 +997,7 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
                 hist_traces.append(
                     go.Scatter(x=year_data['month'], y=year_data['score'], mode='lines', name=f'{year}', line=dict(color=f'rgba(21, 140, 186,{fade})', width=2), showlegend=show_legend, legendgroup = f'{year}')
                 )
-
+            
             scored_combined_forecasted_df['month'] = scored_combined_forecasted_df['date'].dt.month
             score_cols = [col for col in scored_combined_forecasted_df.columns if col.startswith('score_')]
             avg_scores_per_col = scored_combined_forecasted_df.groupby(['year', 'month'])[score_cols].mean()
@@ -1030,15 +1041,18 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
                 # Convert to pandas Series for compatibility with plotting code
                 reason_counts_forecasted[reason] = pd.Series(
                     [mean_cnt for year, mean_cnt in yearly_means],
-                    index=[year for year, mean_cnt in yearly_means]
+                    index=[year for year, mean_cnt in yearly_means],
+                    dtype=float
                 )
                 reason_mins_forecasted[reason] = pd.Series(
                     [min_cnt for year, min_cnt in yearly_mins],
-                    index=[year for year, min_cnt in yearly_mins]
+                    index=[year for year, min_cnt in yearly_mins],
+                    dtype=float
                 )
                 reason_maxs_forecasted[reason] = pd.Series(
                     [max_cnt for year, max_cnt in yearly_maxs],
-                    index=[year for year, max_cnt in yearly_maxs]
+                    index=[year for year, max_cnt in yearly_maxs],
+                    dtype=float
                 )
 
             # Find shared years between historical and forecasted
@@ -1055,17 +1069,17 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
                             forecast_series = forecast_dict.get(reason)
                             if forecast_series is not None:
                                 # Add historical to forecasted, aligning on index
-                                combined_series = forecast_series.add(hist_series, fill_value=0)
+                                combined_series = forecast_series.add(hist_series.astype(float), fill_value=0)
                             else:
                                 # If no forecast data, just use the historical
-                                combined_series = hist_series.copy()
+                                combined_series = hist_series.astype(float).copy()
                             forecast_dict[reason] = combined_series
                     if reason in reason_counts_forecasted:
                         updated_forecast_series = reason_counts_forecasted[reason]
                         if reason in reason_counts_historical:
                             historical_series = reason_counts_historical[reason]
                             # Align and update matching year values only
-                            historical_series.update(updated_forecast_series.loc[historical_series.index])
+                            historical_series.update(updated_forecast_series.loc[historical_series.index].astype(float))
                         else:
                             # If the reason wasn't in historical, create a new one with only the years from forecasted
                             reason_counts_historical[reason] = updated_forecast_series.copy()
@@ -1112,6 +1126,32 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
                 if forecast_data is not None and forecast_mins is not None and forecast_maxs is not None and not forecast_data.empty:
                     reason_traces.append(
                         go.Scatter(
+                            x=forecast_mins.index,
+                            y=forecast_mins.values,
+                            mode='lines',
+                            name='Lower Bound '+reason,
+                            line=dict(width=0),
+                            marker=dict(color=color),
+                            showlegend=False,  # Only show legend if no historical
+                            legendgroup = reason
+                        )
+                    )
+                    reason_traces.append(
+                        go.Scatter(
+                            name='Upper Bound '+reason,
+                            x=forecast_maxs.index,
+                            y=forecast_maxs.values,
+                            marker=dict(color=color),
+                            line=dict(width=0),
+                            mode='lines',
+                            fillcolor=hex_to_rgba(color, 0.3),
+                            fill='tonexty',
+                            showlegend=False, 
+                            legendgroup = reason
+                        )
+                    )
+                    reason_traces.append(
+                        go.Scatter(
                             x=forecast_data.index,
                             y=forecast_data.values,
                             mode='lines',
@@ -1119,32 +1159,6 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
                             line=dict(dash='solid', color=color),
                             marker=dict(color=color),
                             showlegend=not added_trace and show_legend,  # Only show legend if no historical
-                            legendgroup = reason
-                        )
-                    )
-                    reason_traces.append(
-                        go.Scatter(
-                            x=forecast_mins.index,
-                            y=forecast_mins.values,
-                            mode='lines',
-                            name='Lower Bound',
-                            line=dict(width=0),
-                            marker=dict(color="#444"),
-                            showlegend=False,  # Only show legend if no historical
-                            legendgroup = reason
-                        )
-                    )
-                    reason_traces.append(
-                        go.Scatter(
-                            name='Upper Bound',
-                            x=forecast_maxs.index,
-                            y=forecast_maxs.values,
-                            marker=dict(color="#444"),
-                            line=dict(width=0),
-                            mode='lines',
-                            fillcolor=hex_to_rgba(color, 0.3),
-                            fill='tonexty',
-                            showlegend=False, 
                             legendgroup = reason
                         )
                     )
@@ -1210,30 +1224,9 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
             reason_subplots.append(([], f"{city}, {state}"))
             monthly_stacked_subplots.append(([], f"{city}, {state}"))
 
-    # Build the map
-    map_trace = go.Scattermap(
-        lat=lats,
-        lon=lons,
-        mode='markers+text',
-        marker=go.scattermap.Marker(size=14, color='#158cba'),
-        text=labels,
-        textposition='top right',
-    )
-    map_layout = go.Layout(
-        title='Selected Cities Map',
-        autosize=True,
-        hovermode='closest',
-        map=dict(
-            bearing=0,
-            center=dict(lat=np.mean(lats) if lats else 39, lon=np.mean(lons) if lons else -98),
-            pitch=0,
-            zoom=3
-        )
-    )
-    map_figure = go.Figure(data=[map_trace], layout=map_layout)
-
     # Build subplots for each plot type
     n_cities = len(city_states)
+
     # Score Distribution
     # Ensure subplot_titles are strings, not tuples
     subplot_titles = [f"{city}, {state}" for city, state in city_states]
@@ -1267,7 +1260,7 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
         for trace in traces:
             avg_fig.add_trace(trace, row=1, col=i+1)
         avg_fig.add_shape(
-            dict(type='line', x0=min_forecasted_year, x1=min_forecasted_year, y0=50, y1=90, yref='paper', line={'dash': 'dash', 'color': 'black'}),
+            dict(type='line', x0=min_forecasted_year, x1=min_forecasted_year, y0=20, y1=90, yref='paper', line={'dash': 'dash', 'color': 'black'}),
             row=1, col=i+1
         )
     avg_fig.update_layout(
@@ -1319,7 +1312,7 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
         for trace in traces:
             reason_fig.add_trace(trace, row=1, col=i+1)
         reason_fig.add_shape(
-            dict(type='line', x0=min_forecasted_year, x1=min_forecasted_year, y0=0, y1=200, yref='paper', line={'dash': 'dash', 'color': 'black'}),
+            dict(type='line', x0=min_forecasted_year, x1=min_forecasted_year, y0=0, y1=250, yref='paper', line={'dash': 'dash', 'color': 'black'}),
             row=1, col=i+1
         )
     reason_fig.update_layout(
@@ -1352,9 +1345,31 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
         })
     pm25_fig.update_layout(legend_tracegroupgap=2)
 
+    # Build the map
+    map_trace = go.Scattermap(
+        lat=lats,
+        lon=lons,
+        mode='markers+text',
+        marker=go.scattermap.Marker(size=14, color='#158cba'),
+        text=labels,
+        textposition='top right',
+    )
+    map_layout = go.Layout(
+        title='Selected Cities Map',
+        autosize=True,
+        hovermode='closest',
+        map=dict(
+            bearing=0,
+            center=dict(lat=np.mean(lats) if lats else 39, lon=np.mean(lons) if lons else -98),
+            pitch=0,
+            zoom=3
+        )
+    )
+    map_figure = go.Figure(data=[map_trace], layout=map_layout)
+
     # Instead of joining with '<br>', use html.Div for each message
     status_children = [html.Div(msg) for msg in status_msgs]
-    return score_fig, avg_fig, pm25_fig, reason_fig, monthly_fig, map_figure, status_children, gemini_text, location_gemini_div
+    return score_fig, avg_fig, monthly_fig, reason_fig, pm25_fig, map_figure, status_children, gemini_text, location_gemini_div
 
 # Run the app
 if __name__ == '__main__':

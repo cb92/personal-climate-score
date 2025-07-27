@@ -182,8 +182,6 @@ def extract_data_from_api_response(timeseries, cols, hourly = True, timezone = '
 		# Construct DataFrame from converted index
 		df_dict = {}
 		df_dict["datetime"] = datetime_index
-		# The issue is that DatetimeIndex does not have .date() or .time() methods.
-		# Instead, use .date and .time attributes of the underlying numpy array.
 		df_dict["date"] = datetime_index.date
 		df_dict["time"] = datetime_index.time
 	else: 
