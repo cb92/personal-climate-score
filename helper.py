@@ -5,7 +5,6 @@ import numpy as np
 
 import datetime as dt
 from datetime import date
-from dateutil.relativedelta import relativedelta
 import requests
 import openmeteo_requests
 

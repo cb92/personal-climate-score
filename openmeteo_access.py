@@ -1,11 +1,7 @@
-from curses import KEY_SAVE
 from dash import Dash, html, dcc, Input, Output, State, callback
 import dash_bootstrap_components as dbc
 from helper import *
-from retry_requests import retry
 import plotly.graph_objects as go
-from datetime import date
-from dateutil.relativedelta import relativedelta
 from plotly.subplots import make_subplots
 import numpy as np
 from dotenv import load_dotenv
@@ -811,9 +807,7 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
             lons.append(lon)
             labels.append(f"{city}, {state}")
             # Use cache-aware versions of the data retrieval and scoring functions
-            historical_daily_df, pm25_df, _, _ = get_historical_and_aqi_data(lat, lon, timezone, city, state)
-            forecasted_df, _ = get_forecasted_data(lat, lon, timezone, city, state, model='NICAM16_8S')
-            # --- Combined forecasted data (all models) ---
+            historical_daily_df, pm25_df, _, _ = get_historical_and_aqi_data(lat, lon, timezone, city, state)            # --- Combined forecasted data (all models) ---
             combined_forecasted_df, _ = get_combined_forecasted_data(
                 lat, lon, timezone, city, state,
                 models=["EC_Earth3P_HR", "MRI_AGCM3_2_S", "NICAM16_8S"]
@@ -821,16 +815,11 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
             scored_historical_df, reasons_historical = process_historical_for_plotting(
                 historical_daily_df, climate_score, city=city, state=state
             )
-            scored_forecasted_df, reasons_forecasted = process_forecasted_for_plotting(
-                forecasted_df, climate_score, model='NICAM16_8S', city=city, state=state
-            )
             scored_combined_forecasted_df, reasons_combined_forecasted = process_combined_forecasted_for_plotting(
                 combined_forecasted_df, climate_score,
                 models=["EC_Earth3P_HR", "MRI_AGCM3_2_S", "NICAM16_8S"],
                 city=city, state=state
             )
-
-            # TODO: Remove non-combined forecasted_df and scored_forecasted_df usage in favor of scored_combined_forecasted_df
 
             min_forecasted_date = None
             if not scored_combined_forecasted_df.empty:
@@ -848,9 +837,8 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
             else:
                 max_historical_year = scored_historical_df['year'].max()
 
-            # If the last year of historical == first year of forecasted, move forecasted records for that year to historical
+            # If the last year of historical == first year of forecasted, Get the number of distinct days in the shared year in both historical and forecasted dataframes
             if max_historical_year == min_forecasted_year:
-                # Get the number of distinct days in the shared year in both historical and forecasted dataframes
                 shared_year = max_historical_year  # This is the year present in both
                 num_days_shared_historical = scored_historical_df[scored_historical_df['year'] == shared_year]['date'].nunique()
                 num_days_shared_forecasted = scored_combined_forecasted_df[scored_combined_forecasted_df['year'] == shared_year]['date'].nunique()
@@ -942,7 +930,6 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
                 # Set the avg score historical for the shared year to the forecasted value
                 avg_score_historical.loc[shared_year] = avg_score_forecasted.loc[shared_year]
 
-
             average_traces = [
                 go.Scatter(
                     x=avg_score_historical.index, 
@@ -986,40 +973,37 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
                 )
             ]
             average_subplots.append((average_traces, f"{city}, {state}"))
-            # --- PM2.5 ---
-            pm25_df['year'] = pd.to_datetime(pm25_df['date']).dt.year
-            pm25_categories = {
-                'Healthy': (0, 12),
-                'Moderate': (12, 35.5),
-                'Unhealthy for Sensitive': (35.5, 55.5),
-                'Unhealthy': (55.5, 150.5),
-                'Hazardous': (150.5, float('inf'))
-            }
-            pm25_data = {}
-            for category, (min_val, max_val) in pm25_categories.items():
-                if max_val == float('inf'):
-                    mask = (pm25_df['pm2_5__micrograms_per_cubic_metre'] >= min_val) & (pm25_df['pm2_5__micrograms_per_cubic_metre'].notna())
-                else:
-                    mask = (pm25_df['pm2_5__micrograms_per_cubic_metre'] >= min_val) & (pm25_df['pm2_5__micrograms_per_cubic_metre'] < max_val) & (pm25_df['pm2_5__micrograms_per_cubic_metre'].notna())
-                yearly_counts = pm25_df[mask].groupby('year').size()
-                total_hours_per_year = pm25_df[pm25_df['pm2_5__micrograms_per_cubic_metre'].notna()].groupby('year').size()
-                pm25_data[category] = (yearly_counts / total_hours_per_year * 100)
-
-            pm25_traces = []
-            for category, color in zip(['Healthy', 'Moderate', 'Unhealthy for Sensitive', 'Unhealthy', 'Hazardous'], ['green', 'yellow', 'orange', 'red', 'purple']):
-                pm25_traces.append(
-                    go.Bar(
-                        x=pm25_data[category].index,
-                        y=pm25_data[category].values,
-                        name=category,
-                        marker_color=color,
-                        showlegend=show_legend,
-                        legendgroup = category
-                    )
+            
+            # --- Monthly Stacked ---
+            scored_historical_df['month'] = scored_historical_df['date'].dt.month
+            monthly_avg_hist = scored_historical_df.groupby(['year', 'month'])['score'].mean().reset_index()
+            years_hist = sorted(monthly_avg_hist['year'].unique())
+            n_hist = len(years_hist)
+            hist_traces = []
+            for i, year in enumerate(years_hist):
+                year_data = monthly_avg_hist[monthly_avg_hist['year'] == year]
+                fade = 0.2 + 0.8 * (i + 1) / n_hist
+                hist_traces.append(
+                    go.Scatter(x=year_data['month'], y=year_data['score'], mode='lines', name=f'{year}', line=dict(color=f'rgba(21, 140, 186,{fade})', width=2), showlegend=show_legend, legendgroup = f'{year}')
                 )
-            pm25_subplots.append((pm25_traces, f"{city}, {state}"))
+
+            scored_combined_forecasted_df['month'] = scored_combined_forecasted_df['date'].dt.month
+            score_cols = [col for col in scored_combined_forecasted_df.columns if col.startswith('score_')]
+            avg_scores_per_col = scored_combined_forecasted_df.groupby(['year', 'month'])[score_cols].mean()
+            monthly_avg_fore = avg_scores_per_col.mean(axis=1).reset_index(name='score')
+            years_fore = sorted(monthly_avg_fore['year'].unique())
+            n_fore = len(years_fore)
+            fore_traces = []
+            for i, year in enumerate(years_fore):
+                year_data = monthly_avg_fore[monthly_avg_fore['year'] == year]
+                fade = 0.2 + 0.8 * (n_fore - i) / n_fore
+                fore_traces.append(
+                    go.Scatter(x=year_data['month'], y=year_data['score'], mode='lines', name=f'{year}', line=dict(color=f'rgba(186, 21, 53,{fade})', width=2), showlegend=show_legend, legendgroup = f'{year}')
+                )
+            monthly_stacked_subplots.append((hist_traces + fore_traces, f"{city}, {state}"))
+            
             # --- Reason Distribution ---
-            all_reasons = list(set(reasons_historical).union(set(reasons_forecasted)))
+            all_reasons = list(set(reasons_historical).union(set(reasons_combined_forecasted)))
             reason_counts_historical = {reason: scored_historical_df[scored_historical_df['reason'] == reason].groupby('year').size() for reason in all_reasons}
             
             # For combined forecasted df: get reason count for each reason_* column by year, then average per year for each reason
@@ -1125,13 +1109,7 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
                 forecast_data = reason_counts_forecasted.get(reason)
                 forecast_mins = reason_mins_forecasted.get(reason)
                 forecast_maxs = reason_maxs_forecasted.get(reason)
-                print(reason)
-                print(forecast_data)
-                print(forecast_mins)
-                print(forecast_maxs)
                 if forecast_data is not None and forecast_mins is not None and forecast_maxs is not None and not forecast_data.empty:
-                    print("entered if here")
-
                     reason_traces.append(
                         go.Scatter(
                             x=forecast_data.index,
@@ -1187,33 +1165,41 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
                         )
                     )
             reason_subplots.append((reason_traces, f"{city}, {state}"))
-            # --- Monthly Stacked ---
-            scored_historical_df['month'] = scored_historical_df['date'].dt.month
-            monthly_avg_hist = scored_historical_df.groupby(['year', 'month'])['score'].mean().reset_index()
-            years_hist = sorted(monthly_avg_hist['year'].unique())
-            n_hist = len(years_hist)
-            hist_traces = []
-            for i, year in enumerate(years_hist):
-                year_data = monthly_avg_hist[monthly_avg_hist['year'] == year]
-                fade = 0.2 + 0.8 * (i + 1) / n_hist
-                hist_traces.append(
-                    go.Scatter(x=year_data['month'], y=year_data['score'], mode='lines', name=f'{year}', line=dict(color=f'rgba(21, 140, 186,{fade})', width=2), showlegend=show_legend, legendgroup = f'{year}')
-                )
+            
+            # --- PM2.5 ---
+            pm25_df['year'] = pd.to_datetime(pm25_df['date']).dt.year
+            pm25_categories = {
+                'Healthy': (0, 12),
+                'Moderate': (12, 35.5),
+                'Unhealthy for Sensitive': (35.5, 55.5),
+                'Unhealthy': (55.5, 150.5),
+                'Hazardous': (150.5, float('inf'))
+            }
+            pm25_data = {}
+            for category, (min_val, max_val) in pm25_categories.items():
+                if max_val == float('inf'):
+                    mask = (pm25_df['pm2_5__micrograms_per_cubic_metre'] >= min_val) & (pm25_df['pm2_5__micrograms_per_cubic_metre'].notna())
+                else:
+                    mask = (pm25_df['pm2_5__micrograms_per_cubic_metre'] >= min_val) & (pm25_df['pm2_5__micrograms_per_cubic_metre'] < max_val) & (pm25_df['pm2_5__micrograms_per_cubic_metre'].notna())
+                yearly_counts = pm25_df[mask].groupby('year').size()
+                total_hours_per_year = pm25_df[pm25_df['pm2_5__micrograms_per_cubic_metre'].notna()].groupby('year').size()
+                pm25_data[category] = (yearly_counts / total_hours_per_year * 100)
 
-            scored_combined_forecasted_df['month'] = scored_combined_forecasted_df['date'].dt.month
-            score_cols = [col for col in scored_combined_forecasted_df.columns if col.startswith('score_')]
-            avg_scores_per_col = scored_combined_forecasted_df.groupby(['year', 'month'])[score_cols].mean()
-            monthly_avg_fore = avg_scores_per_col.mean(axis=1).reset_index(name='score')
-            years_fore = sorted(monthly_avg_fore['year'].unique())
-            n_fore = len(years_fore)
-            fore_traces = []
-            for i, year in enumerate(years_fore):
-                year_data = monthly_avg_fore[monthly_avg_fore['year'] == year]
-                fade = 0.2 + 0.8 * (n_fore - i) / n_fore
-                fore_traces.append(
-                    go.Scatter(x=year_data['month'], y=year_data['score'], mode='lines', name=f'{year}', line=dict(color=f'rgba(186, 21, 53,{fade})', width=2), showlegend=show_legend, legendgroup = f'{year}')
+            pm25_traces = []
+            for category, color in zip(['Healthy', 'Moderate', 'Unhealthy for Sensitive', 'Unhealthy', 'Hazardous'], ['green', 'yellow', 'orange', 'red', 'purple']):
+                pm25_traces.append(
+                    go.Bar(
+                        x=pm25_data[category].index,
+                        y=pm25_data[category].values,
+                        name=category,
+                        marker_color=color,
+                        showlegend=show_legend,
+                        legendgroup = category
+                    )
                 )
-            monthly_stacked_subplots.append((hist_traces + fore_traces, f"{city}, {state}"))
+            pm25_subplots.append((pm25_traces, f"{city}, {state}"))
+            
+            
             status_msgs.append(f"{city}, {state}: Data retrieved successfully")
         except Exception as e:
             status_msgs.append(f"{city}, {state}: Error - {str(e)}")
@@ -1223,6 +1209,28 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
             pm25_subplots.append(([], f"{city}, {state}"))
             reason_subplots.append(([], f"{city}, {state}"))
             monthly_stacked_subplots.append(([], f"{city}, {state}"))
+
+    # Build the map
+    map_trace = go.Scattermap(
+        lat=lats,
+        lon=lons,
+        mode='markers+text',
+        marker=go.scattermap.Marker(size=14, color='#158cba'),
+        text=labels,
+        textposition='top right',
+    )
+    map_layout = go.Layout(
+        title='Selected Cities Map',
+        autosize=True,
+        hovermode='closest',
+        map=dict(
+            bearing=0,
+            center=dict(lat=np.mean(lats) if lats else 39, lon=np.mean(lons) if lons else -98),
+            pitch=0,
+            zoom=3
+        )
+    )
+    map_figure = go.Figure(data=[map_trace], layout=map_layout)
 
     # Build subplots for each plot type
     n_cities = len(city_states)
@@ -1274,45 +1282,6 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
         })
     avg_fig.update_layout(legend_tracegroupgap=2)
 
-    # PM2.5
-    pm25_fig = make_subplots(rows=1, cols=n_cities, subplot_titles=subplot_titles)
-    for i, (traces, label) in enumerate(pm25_subplots):
-        for trace in traces:
-            pm25_fig.add_trace(trace, row=1, col=i+1)
-    pm25_fig.update_layout(
-        title='PM2.5 Air Quality Distribution by Year', 
-        barmode='stack'
-    )
-    for i in range(1, n_cities + 1):
-        xaxis_name = 'xaxis' if i == 1 else f'xaxis{i}'
-        yaxis_name = 'yaxis' if i == 1 else f'yaxis{i}'
-        pm25_fig.update_layout({
-            xaxis_name: {'title': 'Year'},
-            yaxis_name: {'title': 'Percentage of Hours'} if i == 1 else {},
-        })
-    pm25_fig.update_layout(legend_tracegroupgap=2)
-
-    # Reason Distribution
-    reason_fig = make_subplots(rows=1, cols=n_cities, subplot_titles=subplot_titles)
-    for i, (traces, label) in enumerate(reason_subplots):
-        for trace in traces:
-            reason_fig.add_trace(trace, row=1, col=i+1)
-        reason_fig.add_shape(
-            dict(type='line', x0=min_forecasted_year, x1=min_forecasted_year, y0=0, y1=200, yref='paper', line={'dash': 'dash', 'color': 'black'}),
-            row=1, col=i+1
-        )
-    reason_fig.update_layout(
-        title='Number of Days by Type (Reason) per Year'
-    )
-    for i in range(1, n_cities + 1):
-        xaxis_name = 'xaxis' if i == 1 else f'xaxis{i}'
-        yaxis_name = 'yaxis' if i == 1 else f'yaxis{i}'
-        reason_fig.update_layout({
-            xaxis_name: {'title': 'Year'},
-            yaxis_name: {'title': 'Number of Days'} if i == 1 else {},
-        })
-    reason_fig.update_layout(legend_tracegroupgap=2)
-
     # Monthly Stacked
     monthly_fig = make_subplots(rows=1, cols=n_cities, subplot_titles=subplot_titles)
     for i, (traces, label) in enumerate(monthly_stacked_subplots):
@@ -1344,28 +1313,44 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
         yaxis_title="Your Y-Axis Label"
     )
 
-
-    # Build the map
-    map_trace = go.Scattermap(
-        lat=lats,
-        lon=lons,
-        mode='markers+text',
-        marker=go.scattermap.Marker(size=14, color='#158cba'),
-        text=labels,
-        textposition='top right',
-    )
-    map_layout = go.Layout(
-        title='Selected Cities Map',
-        autosize=True,
-        hovermode='closest',
-        map=dict(
-            bearing=0,
-            center=dict(lat=np.mean(lats) if lats else 39, lon=np.mean(lons) if lons else -98),
-            pitch=0,
-            zoom=3
+    # Reason Distribution
+    reason_fig = make_subplots(rows=1, cols=n_cities, subplot_titles=subplot_titles)
+    for i, (traces, label) in enumerate(reason_subplots):
+        for trace in traces:
+            reason_fig.add_trace(trace, row=1, col=i+1)
+        reason_fig.add_shape(
+            dict(type='line', x0=min_forecasted_year, x1=min_forecasted_year, y0=0, y1=200, yref='paper', line={'dash': 'dash', 'color': 'black'}),
+            row=1, col=i+1
         )
+    reason_fig.update_layout(
+        title='Number of Days by Type (Reason) per Year'
     )
-    map_figure = go.Figure(data=[map_trace], layout=map_layout)
+    for i in range(1, n_cities + 1):
+        xaxis_name = 'xaxis' if i == 1 else f'xaxis{i}'
+        yaxis_name = 'yaxis' if i == 1 else f'yaxis{i}'
+        reason_fig.update_layout({
+            xaxis_name: {'title': 'Year'},
+            yaxis_name: {'title': 'Number of Days'} if i == 1 else {},
+        })
+    reason_fig.update_layout(legend_tracegroupgap=2)
+
+    # PM2.5
+    pm25_fig = make_subplots(rows=1, cols=n_cities, subplot_titles=subplot_titles)
+    for i, (traces, label) in enumerate(pm25_subplots):
+        for trace in traces:
+            pm25_fig.add_trace(trace, row=1, col=i+1)
+    pm25_fig.update_layout(
+        title='PM2.5 Air Quality Distribution by Year', 
+        barmode='stack'
+    )
+    for i in range(1, n_cities + 1):
+        xaxis_name = 'xaxis' if i == 1 else f'xaxis{i}'
+        yaxis_name = 'yaxis' if i == 1 else f'yaxis{i}'
+        pm25_fig.update_layout({
+            xaxis_name: {'title': 'Year'},
+            yaxis_name: {'title': 'Percentage of Hours'} if i == 1 else {},
+        })
+    pm25_fig.update_layout(legend_tracegroupgap=2)
 
     # Instead of joining with '<br>', use html.Div for each message
     status_children = [html.Div(msg) for msg in status_msgs]
