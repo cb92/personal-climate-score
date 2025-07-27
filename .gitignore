@@ -6,3 +6,6 @@
 
 # Ignore environment variables (ie API key)
 .env
+
+# Ignore pycache
+__pycache/
