@@ -850,31 +850,36 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
 
             # If the last year of historical == first year of forecasted, move forecasted records for that year to historical
             if max_historical_year == min_forecasted_year:
-                # Move score records: remove the shared year from both dfs and put them into a third df
-                mask_historical = scored_historical_df['year'] == min_forecasted_year
-                mask_forecasted = scored_forecasted_df['year'] == min_forecasted_year
-                scored_combo_df = pd.DataFrame()
-                if mask_historical.any() or mask_forecasted.any():
-                    # Combine the rows from both dfs for the shared year
-                    scored_combo_df = pd.concat([
-                        scored_historical_df[mask_historical],
-                        scored_forecasted_df[mask_forecasted]
-                    ], ignore_index=True)
-                    # Remove those rows from the original dfs
-                    scored_historical_df = scored_historical_df[~mask_historical]
-                    scored_forecasted_df = scored_forecasted_df[~mask_forecasted]
-                else:
-                    scored_combo_df = pd.DataFrame()
-                scored_historical_df = pd.concat([scored_historical_df, scored_combo_df])
+                # Get the number of distinct days in the shared year in both historical and forecasted dataframes
+                shared_year = max_historical_year  # This is the year present in both
+                num_days_shared_historical = scored_historical_df[scored_historical_df['year'] == shared_year]['date'].nunique()
+                num_days_shared_forecasted = scored_combined_forecasted_df[scored_combined_forecasted_df['year'] == shared_year]['date'].nunique()
+                
             
             # --- Score Distribution ---
             score_percents_historical = {}
-            score_percents_forecasted = {}
+            score_percents_combined_forecasted = {}
+            all_dates = pd.concat([scored_historical_df[['year', 'date']], scored_combined_forecasted_df[['year', 'date']]])
+            dates_per_year = all_dates.drop_duplicates().groupby('year')['date'].nunique()
+            score_cols = [col for col in scored_combined_forecasted_df.columns if col.startswith('score_')]
+            score_percents_by_model = []
+            for col in score_cols:
+                model_percents = {}
+                for score_val in [0, 25, 50, 75, 100]:
+                    score_percent = scored_combined_forecasted_df[scored_combined_forecasted_df[col] == score_val].groupby('year').size() / dates_per_year #scored_combined_forecasted_df.groupby('year').size()
+                    model_percents[score_val] = 100 * score_percent.fillna(0)
+                score_percents_by_model.append(model_percents)
+
             for score_val in [0, 25, 50, 75, 100]:
-                score_percent = scored_historical_df[scored_historical_df['score'] == score_val].groupby('year').size() / scored_historical_df.groupby('year').size()
+                # Calculate the denominator: number of distinct dates per year across both historical and combined forecasted dataframes
+                score_percent = scored_historical_df[scored_historical_df['score'] == score_val].groupby('year').size() / dates_per_year
                 score_percents_historical[score_val] = 100*score_percent.fillna(0)
-                score_percent = scored_forecasted_df[scored_forecasted_df['score'] == score_val].groupby('year').size() / scored_forecasted_df.groupby('year').size()
-                score_percents_forecasted[score_val] = 100*score_percent.fillna(0)
+                dfs = [model[score_val] for model in score_percents_by_model]
+                if dfs:
+                    combined = pd.concat(dfs, axis=1).mean(axis=1)
+                else:
+                    combined = pd.Series(dtype=float)
+                score_percents_combined_forecasted[score_val] = combined
             
             
             score_traces = []
@@ -891,8 +896,8 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
                 )
                 score_traces.append(
                     go.Bar(
-                        x=score_percents_forecasted[score_val].index,
-                        y=score_percents_forecasted[score_val].values,
+                        x=score_percents_combined_forecasted[score_val].index,
+                        y=score_percents_combined_forecasted[score_val].values,
                         name=score_name,
                         marker_color=color,
                         opacity=0.7,
@@ -903,7 +908,40 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
             score_subplots.append((score_traces, min_forecasted_year, f"{city}, {state}"))
             # --- Score Average ---
             avg_score_historical = scored_historical_df.groupby('year')['score'].mean()
-            avg_score_forecasted = scored_forecasted_df.groupby('year')['score'].mean()
+            # Take the average score for each of the score columns, then average across those averages by year
+            score_cols = [col for col in scored_combined_forecasted_df.columns if col.startswith('score_')]
+            avg_scores_per_col = scored_combined_forecasted_df.groupby('year')[score_cols].mean()
+            avg_score_forecasted = avg_scores_per_col.mean(axis=1)
+            min_score_forecasted = avg_scores_per_col.min(axis=1)
+            max_score_forecasted = avg_scores_per_col.max(axis=1)
+
+            # Find the shared year between historical and forecasted
+            if shared_year:
+                total_days = num_days_shared_historical + num_days_shared_forecasted
+                # Weighted average for mean
+                hist_avg = avg_score_historical.loc[shared_year]
+                fore_avg = avg_score_forecasted.loc[shared_year]
+                weighted_avg = (
+                    hist_avg * num_days_shared_historical + fore_avg * num_days_shared_forecasted
+                ) / total_days
+                avg_score_forecasted.loc[shared_year] = weighted_avg
+
+                fore_min = min_score_forecasted.loc[shared_year]
+                fore_max = max_score_forecasted.loc[shared_year]
+                weighted_min = (
+                    hist_avg * (num_days_shared_historical / total_days)
+                    + fore_min * (num_days_shared_forecasted / total_days)
+                )
+                weighted_max = (
+                    hist_avg * (num_days_shared_historical / total_days)
+                    + fore_max * (num_days_shared_forecasted / total_days)
+                )
+                min_score_forecasted.loc[shared_year] = weighted_min
+                max_score_forecasted.loc[shared_year] = weighted_max
+
+                # Set the avg score historical for the shared year to the forecasted value
+                avg_score_historical.loc[shared_year] = avg_score_forecasted.loc[shared_year]
+
 
             average_traces = [
                 go.Scatter(
@@ -922,6 +960,28 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
                     name='Forecasted', 
                     line=dict(color='#ba1535', width=2), 
                     showlegend=show_legend,
+                    legendgroup = 'avg_graphs__f'
+                ),
+                go.Scatter(
+                    name='Upper Bound',
+                    x=max_score_forecasted.index,
+                    y=max_score_forecasted.values,
+                    mode='lines',
+                    marker=dict(color="#444"),
+                    line=dict(width=0),
+                    showlegend=False, 
+                    legendgroup = 'avg_graphs__f'
+                ),
+                go.Scatter(
+                    name='Lower Bound',
+                    x=min_score_forecasted.index,
+                    y=min_score_forecasted.values,
+                    marker=dict(color="#444"),
+                    line=dict(width=0),
+                    mode='lines',
+                    fillcolor='rgba(68, 68, 68, 0.3)',
+                    fill='tonexty',
+                    showlegend=False, 
                     legendgroup = 'avg_graphs__f'
                 )
             ]
@@ -961,8 +1021,72 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
             # --- Reason Distribution ---
             all_reasons = list(set(reasons_historical).union(set(reasons_forecasted)))
             reason_counts_historical = {reason: scored_historical_df[scored_historical_df['reason'] == reason].groupby('year').size() for reason in all_reasons}
-            reason_counts_forecasted = {reason: scored_forecasted_df[scored_forecasted_df['reason'] == reason].groupby('year').size() for reason in all_reasons}
             
+            # For combined forecasted df: get reason count for each reason_* column by year, then average per year for each reason
+            reason_cols = [col for col in scored_combined_forecasted_df.columns if col.startswith('reason_')]
+            years = scored_combined_forecasted_df['year'].unique()
+            reason_counts_forecasted = {}
+            reason_mins_forecasted = {}
+            reason_maxs_forecasted = {}
+            for reason in all_reasons:
+                # For each year, count how many times this reason appears in any reason_* column
+                yearly_means = []
+                yearly_mins = []
+                yearly_maxs = []
+                for year in sorted(years):
+                    df_year = scored_combined_forecasted_df[scored_combined_forecasted_df['year'] == year]
+                    # Count occurrences of this reason in all reason_* columns for this year
+                    mean_cnt = sum((df_year[col] == reason).sum() for col in reason_cols)  / len(reason_cols)
+                    min_cnt = min((df_year[col] == reason).sum() for col in reason_cols) 
+                    max_cnt = max((df_year[col] == reason).sum() for col in reason_cols) 
+                    # Normalize by number of models (columns) to get average per year
+                    yearly_means.append((year, mean_cnt))
+                    yearly_mins.append((year, min_cnt))
+                    yearly_maxs.append((year, max_cnt))
+                # Convert to pandas Series for compatibility with plotting code
+                reason_counts_forecasted[reason] = pd.Series(
+                    [mean_cnt for year, mean_cnt in yearly_means],
+                    index=[year for year, mean_cnt in yearly_means]
+                )
+                reason_mins_forecasted[reason] = pd.Series(
+                    [min_cnt for year, min_cnt in yearly_mins],
+                    index=[year for year, min_cnt in yearly_mins]
+                )
+                reason_maxs_forecasted[reason] = pd.Series(
+                    [max_cnt for year, max_cnt in yearly_maxs],
+                    index=[year for year, max_cnt in yearly_maxs]
+                )
+
+            # Find shared years between historical and forecasted
+            if shared_year:
+                for reason in all_reasons:
+                    hist_series = reason_counts_historical.get(reason)
+                    if hist_series is not None:
+                        # Add to forecasted series if it exists, else create a new one
+                        for forecast_dict in [
+                            reason_counts_forecasted,
+                            reason_mins_forecasted,
+                            reason_maxs_forecasted
+                        ]:
+                            forecast_series = forecast_dict.get(reason)
+                            if forecast_series is not None:
+                                # Add historical to forecasted, aligning on index
+                                combined_series = forecast_series.add(hist_series, fill_value=0)
+                            else:
+                                # If no forecast data, just use the historical
+                                combined_series = hist_series.copy()
+                            forecast_dict[reason] = combined_series
+                    if reason in reason_counts_forecasted:
+                        updated_forecast_series = reason_counts_forecasted[reason]
+                        if reason in reason_counts_historical:
+                            historical_series = reason_counts_historical[reason]
+                            # Align and update matching year values only
+                            historical_series.update(updated_forecast_series.loc[historical_series.index])
+                        else:
+                            # If the reason wasn't in historical, create a new one with only the years from forecasted
+                            reason_counts_historical[reason] = updated_forecast_series.copy()
+
+                
             # Define theme colors for consistent coloring
             reason_to_color = {
                 "neutral": "#158cba",
@@ -999,23 +1123,57 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
 
                 # Forecasted trace (dotted line)
                 forecast_data = reason_counts_forecasted.get(reason)
-                if forecast_data is not None and not forecast_data.empty:
+                forecast_mins = reason_mins_forecasted.get(reason)
+                forecast_maxs = reason_maxs_forecasted.get(reason)
+                print(reason)
+                print(forecast_data)
+                print(forecast_mins)
+                print(forecast_maxs)
+                if forecast_data is not None and forecast_mins is not None and forecast_maxs is not None and not forecast_data.empty:
+                    print("entered if here")
+
                     reason_traces.append(
                         go.Scatter(
                             x=forecast_data.index,
                             y=forecast_data.values,
                             mode='lines',
                             name=reason,
-                            line=dict(dash='dot', color=color),
+                            line=dict(dash='solid', color=color),
                             marker=dict(color=color),
                             showlegend=not added_trace and show_legend,  # Only show legend if no historical
+                            legendgroup = reason
+                        )
+                    )
+                    reason_traces.append(
+                        go.Scatter(
+                            x=forecast_mins.index,
+                            y=forecast_mins.values,
+                            mode='lines',
+                            name='Lower Bound',
+                            line=dict(width=0),
+                            marker=dict(color="#444"),
+                            showlegend=False,  # Only show legend if no historical
+                            legendgroup = reason
+                        )
+                    )
+                    reason_traces.append(
+                        go.Scatter(
+                            name='Upper Bound',
+                            x=forecast_maxs.index,
+                            y=forecast_maxs.values,
+                            marker=dict(color="#444"),
+                            line=dict(width=0),
+                            mode='lines',
+                            fillcolor=hex_to_rgba(color, 0.3),
+                            fill='tonexty',
+                            showlegend=False, 
                             legendgroup = reason
                         )
                     )
                     added_trace = True
 
                 # If no data at all, add a dummy invisible trace to lock in the color
-                if not added_trace:
+                else:
                     reason_traces.append(
                         go.Scatter(
                             x=[None],
@@ -1031,7 +1189,6 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
             reason_subplots.append((reason_traces, f"{city}, {state}"))
             # --- Monthly Stacked ---
             scored_historical_df['month'] = scored_historical_df['date'].dt.month
-            scored_forecasted_df['month'] = scored_forecasted_df['date'].dt.month
             monthly_avg_hist = scored_historical_df.groupby(['year', 'month'])['score'].mean().reset_index()
             years_hist = sorted(monthly_avg_hist['year'].unique())
             n_hist = len(years_hist)
@@ -1042,7 +1199,11 @@ def update_charts(n_clicks, city1, state1, include1, city2, state2, include2, ci
                 hist_traces.append(
                     go.Scatter(x=year_data['month'], y=year_data['score'], mode='lines', name=f'{year}', line=dict(color=f'rgba(21, 140, 186,{fade})', width=2), showlegend=show_legend, legendgroup = f'{year}')
                 )
-            monthly_avg_fore = scored_forecasted_df.groupby(['year', 'month'])['score'].mean().reset_index()
+
+            scored_combined_forecasted_df['month'] = scored_combined_forecasted_df['date'].dt.month
+            score_cols = [col for col in scored_combined_forecasted_df.columns if col.startswith('score_')]
+            avg_scores_per_col = scored_combined_forecasted_df.groupby(['year', 'month'])[score_cols].mean()
+            monthly_avg_fore = avg_scores_per_col.mean(axis=1).reset_index(name='score')
             years_fore = sorted(monthly_avg_fore['year'].unique())
             n_fore = len(years_fore)
             fore_traces = []

@@ -161,6 +161,13 @@ def get_variable_name(var_value):
             return name
     return f"unknown({var_value})"
 
+def hex_to_rgba(hex_color, alpha):
+    """Converts a hex color code to an RGBA string with specified alpha."""
+    hex_color = hex_color.lstrip('#')
+    rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    return f"rgba({rgb[0]}, {rgb[1]}, {rgb[2]}, {alpha})"
+
+
 def extract_data_from_api_response(timeseries, cols, hourly = True, timezone = 'America/Los_Angeles'):
 	if hourly:
 		datetime_index = pd.date_range(
@@ -413,7 +420,7 @@ def get_forecasted_data(lat, long, city_timezone, city, state, model, col_names=
         "latitude": lat,
         "longitude": long,
         "start_date": date.today(),
-        "end_date": date(date.today().year + 25, 12, 31),
+        "end_date": date(date.today().year + 24, 12, 31),
         "models": model,
         "daily": col_names
     }
@@ -556,7 +563,7 @@ def get_combined_forecasted_data(lat, long, city_timezone, city, state, models=N
             "latitude": lat,
             "longitude": long,
             "start_date": date.today(),
-            "end_date": date(date.today().year + 25, 12, 31),
+            "end_date": date(date.today().year + 24, 12, 31),
             "models": model,
             "daily": col_names
         }
