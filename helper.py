@@ -223,10 +223,10 @@ def daily_climate_score__hourly(temperature_arr,
 	score = 0
 	reason = "neutral"
     #this if/elif loop should logically be disjoint
-	if (np.max(temperature_arr) > f_to_c(score_obj.humid_day_max) and np.min(dew_point_arr) > f_to_c(65)):
+	if (np.max(temperature_arr) > f_to_c(score_obj.humid_day_max) and np.min(dew_point_arr) > f_to_c(60)):
 		score = score_obj.humid_day_coef
 		reason = "too hot, humid"
-	elif (np.max(temperature_arr) > f_to_c(score_obj.dry_heat_day_min) and np.min(dew_point_arr) < f_to_c(55)):
+	elif (np.max(temperature_arr) > f_to_c(score_obj.dry_heat_day_min) and np.min(dew_point_arr) <= f_to_c(60)):
 		score = score_obj.dry_heat_day_coef
 		reason = "too hot, dry"
 	elif (np.max(temperature_arr) < f_to_c(score_obj.too_cold_windy__max) and np.mean(wind_arr) > 30):
@@ -282,10 +282,10 @@ def daily_climate_score__daily(temperature_max,
 								score_obj):
 	score = 0
 	reason = "neutral"
-	if (temperature_max > f_to_c(score_obj.humid_day_max) and dew_point_min > f_to_c(65)):
+	if (temperature_max > f_to_c(score_obj.humid_day_max) and dew_point_min > f_to_c(60)):
 		score = score_obj.humid_day_coef
 		reason = "too hot, humid"
-	elif (temperature_max > f_to_c(score_obj.dry_heat_day_min) and dew_point_min < f_to_c(55)):
+	elif (temperature_max > f_to_c(score_obj.dry_heat_day_min) and dew_point_min <= f_to_c(60)):
 		score = score_obj.dry_heat_day_coef
 		reason = "too hot, dry"
 	elif (temperature_max < f_to_c(score_obj.too_cold_windy__max) and wind_mean > 30):

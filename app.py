@@ -520,7 +520,7 @@ app.layout = html.Div([
                 )
             ]),
             html.Div(
-                "Click the button below to calculate your personal climate score metrics for the cities you've selected. Note that if you choose entirely new location/score combinations that the tool has not seen before, it may take a minute to complete. ",
+                "Click the button below to calculate your personal climate score metrics for the cities you've selected. Note that if you choose entirely new location/score combinations that the tool has not seen before, it may take up to one minute to complete. ",
                 style={'fontSize': '0.95em', 'color': '#555', 'marginBottom': '10px', 'marginTop': '15px'}
             ),
             dbc.Button('Calculate Climate Scores', id='calculate-btn', n_clicks=0, style={'marginTop': '10px', 'padding': '14px 28px', 'backgroundColor': '#158cba', 'color': 'white', 'border': 'none', 'borderRadius': '6px', 'cursor': 'pointer', 'fontSize': '16px', 'fontWeight': 'bold'}),
