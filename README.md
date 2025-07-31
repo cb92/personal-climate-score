@@ -119,7 +119,7 @@ Built with Dash and Bootstrap, the interface provides:
 
 ## Limitations
 
-- Climate projections have inherent uncertainty and should be used as guidance rather than predictions
+- All models are wrong, some models are useful! Climate projections have inherent uncertainty and bias and should not be understood as fact. This is well-demonstrated in the differences in maximum temperature distribution between historical data and the three climate models for Miami, Florida, an area where certain score parameters lead to dramatic future changes ![miami_temp_density](https://github.com/user-attachments/assets/4e2e11ad-cb41-4aa1-8855-87f495cd89e5)
 - Air quality data availability varies by location and time period
 - The app focuses on US cities only
 - Natural disaster risk assessment is qualitative and should be supplemented with additional research
