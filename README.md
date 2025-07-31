@@ -1,5 +1,33 @@
 # Personal Climate Score Dashboard
 
+## Table of Contents
+[Overview](#overview)
+
+[Motivation](#motivation)
+
+[Key Features](#key-features) 
+
+[How It Works](#how-it-works)
+
+&nbsp;&nbsp;&nbsp;&nbsp;[Data sources](#data-sources) 
+
+&nbsp;&nbsp;&nbsp;&nbsp;[Personalized Scoring Algorithm](#personalized-scoring-algorithm)
+
+&nbsp;&nbsp;&nbsp;&nbsp;[Data Visualization](#data-visualization) 
+
+&nbsp;&nbsp;&nbsp;&nbsp;[Caching System](#caching-system)
+
+&nbsp;&nbsp;&nbsp;&nbsp;[AI Integration](#ai-integration)
+
+&nbsp;&nbsp;&nbsp;&nbsp;[User Interface](#user-interface)
+
+[Technical Architecture](#technical-architecture)
+
+[Limitations](#limitations)
+
+[Setup instructions](#setup-instructions) 
+
+
 ## Overview
 The **Personal Climate Score Dashboard** is an interactive web application that helps users compare the climate and environmental conditions of up to three US cities based on their personal weather preferences. It provides personalized climate scoring that takes into account both historical weather patterns and future climate projections, helping users make informed decisions about where they might want to live based on their climate preferences.
 
