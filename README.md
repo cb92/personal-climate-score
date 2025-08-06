@@ -48,6 +48,7 @@ In the face of a changing climate, questions about where to live, buy property, 
 - **Air Quality Tracking**: PM2.5 air quality data and trends
 - **Natural Disaster Risk Assessment**: Consideration of flooding, wildfire, smoke, earthquake, hurricane, and tornado risks
 - **AI-Powered Recommendations**: Integration with Google Gemini AI for location suggestions and analysis
+- **Advanced Caching**: Intelligent cache management with automatic size control and performance optimization
 
 ## How It Works
 
@@ -91,9 +92,12 @@ The app generates multiple interactive charts for each city:
 
 ### Caching System
 To improve performance and reduce API calls, the app implements a comprehensive caching system:
-- Weather data cached locally with city/state/model-specific filenames
-- Score calculations cached based on parameter hashes
-- Automatic cache invalidation when parameters change
+- **Intelligent Cache Management**: Weather data cached locally with city/state/model-specific filenames
+- **Automatic Size Control**: Cache automatically cleaned up when it exceeds 100MB, keeping the most recently accessed files
+- **Cache Directory Tracking**: JSON-based metadata tracking for all cached files including size, access counts, and last access times
+- **Score Calculation Caching**: Score calculations cached based on parameter hashes for faster repeated calculations
+- **Automatic Cache Invalidation**: Cache automatically invalidated when parameters change
+- **Performance Optimization**: Reduces API calls and improves response times for frequently accessed data
 
 ### AI Integration
 The app leverages Google Gemini AI to provide:
@@ -114,7 +118,7 @@ Built with Dash and Bootstrap, the interface provides:
 - **Backend**: Python with pandas for data processing
 - **Data Sources**: Open-Meteo APIs for weather and climate data
 - **AI**: Google Gemini API for intelligent recommendations
-- **Caching**: Local file-based caching system
+- **Caching**: Advanced local file-based caching system with automatic size management, access count tracking, and metadata management
 - **Deployment**: Flask server with Bootstrap styling
 
 ## Limitations
@@ -139,5 +143,5 @@ python app.py
 ```
 Once the app is running, put the link into your browser window (something like `http://127.0.0.1:PORTNUMBER/`) to interact with the app
 
-Note that running this app will cause files to be written to a folder called `cache/` in your working directory.
+Note that running this app will cause files to be written to a folder called `cache/` in your working directory. The app includes an intelligent caching system that automatically manages cache size and optimizes performance.
 

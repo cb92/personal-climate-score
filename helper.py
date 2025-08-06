@@ -11,6 +11,8 @@ import openmeteo_requests
 import os
 import hashlib
 import json
+import time
+from pathlib import Path
 
 
 class Score:
@@ -715,9 +717,153 @@ def get_cache_filename(data_type, city, state, model=None, score_params=None, mo
         raise ValueError(f"Unknown data_type: {data_type}")
 
 
+def get_cache_directory_file():
+    """
+    Get the path to the cache directory file.
+    
+    Returns:
+        Path to the cache directory file
+    """
+    cache_dir = "cache"
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+    return os.path.join(cache_dir, "cache_directory.json")
+
+
+def load_cache_directory():
+    """
+    Load the cache directory information from file.
+    
+    Returns:
+        Dictionary containing cache file information
+    """
+    directory_file = get_cache_directory_file()
+    if os.path.exists(directory_file):
+        try:
+            with open(directory_file, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading cache directory: {e}")
+            return {}
+    return {}
+
+
+def save_cache_directory(cache_info):
+    """
+    Save the cache directory information to file.
+    
+    Args:
+        cache_info: Dictionary containing cache file information
+    """
+    directory_file = get_cache_directory_file()
+    try:
+        with open(directory_file, 'w') as f:
+            json.dump(cache_info, f, indent=2)
+    except Exception as e:
+        print(f"Error saving cache directory: {e}")
+
+
+def update_cache_access_info(filename):
+    """
+    Update the access information for a cache file.
+    Increments access count and updates last access time.
+    
+    Args:
+        filename: Path to the cache file
+    """
+    cache_info = load_cache_directory()
+    current_time = time.time()
+    
+    if filename in cache_info:
+        # Increment access count and update last access time
+        cache_info[filename]['access_count'] = cache_info[filename].get('access_count', 0) + 1
+        cache_info[filename]['last_accessed'] = current_time
+    else:
+        # If file doesn't exist in directory, get its size
+        file_size = 0
+        if os.path.exists(filename):
+            try:
+                file_size = os.path.getsize(filename)
+            except OSError:
+                file_size = 0
+        
+        cache_info[filename] = {
+            'last_accessed': current_time,
+            'size_bytes': file_size,
+            'access_count': 1  # Initialize access count to 1 for new files
+        }
+    
+    save_cache_directory(cache_info)
+
+
+def get_cache_file_size(filename):
+    """
+    Get the size of a cache file in bytes.
+    
+    Args:
+        filename: Path to the cache file
+    
+    Returns:
+        File size in bytes, 0 if file doesn't exist
+    """
+    try:
+        return os.path.getsize(filename) if os.path.exists(filename) else 0
+    except OSError:
+        return 0
+
+
+def cleanup_cache_if_needed(max_size_mb=100):
+    """
+    Clean up cache files if total size exceeds 100 MB.
+    Keeps the most recently accessed files that fit within 100 MB.
+    """
+    cache_info = load_cache_directory()
+    
+    # Calculate total cache size
+    total_size = sum(info.get('size_bytes', 0) for info in cache_info.values())
+    max_cache_size = max_size_mb * 1024 * 1024  # 100 MB in bytes
+    
+    if total_size <= max_cache_size:
+        return
+    
+    print(f"Cache size ({total_size / (1024*1024):.1f} MB) exceeds limit (100 MB). Cleaning up...")
+    
+    # Sort files by last access time (most recent first)
+    sorted_files = sorted(
+        cache_info.items(),
+        key=lambda x: x[1].get('last_accessed', 0),
+        reverse=True
+    )
+    
+    # Keep files until we're under the limit
+    files_to_keep = []
+    current_size = 0
+    
+    for filename, info in sorted_files:
+        file_size = info.get('size_bytes', 0)
+        if current_size + file_size <= max_cache_size:
+            files_to_keep.append(filename)
+            current_size += file_size
+        else:
+            # Delete this file
+            try:
+                if os.path.exists(filename):
+                    os.remove(filename)
+                    print(f"Deleted cache file: {filename}")
+            except OSError as e:
+                print(f"Error deleting cache file {filename}: {e}")
+    
+    # Update cache directory with only kept files
+    new_cache_info = {filename: cache_info[filename] for filename in files_to_keep}
+    save_cache_directory(new_cache_info)
+    
+    print(f"Cache cleanup complete. New size: {current_size / (1024*1024):.1f} MB")
+
+
 def load_cached_data(filename):
     """
     Load data from cache file if it exists.
+    Updates the access information for the file.
     
     Args:
         filename: cache filename
@@ -727,6 +873,9 @@ def load_cached_data(filename):
     """
     if os.path.exists(filename):
         try:
+            # Update access information (increments access count)
+            update_cache_access_info(filename)
+            
             df = pd.read_csv(filename)
             # Convert date columns back to datetime
             if 'date' in df.columns:
@@ -741,6 +890,7 @@ def load_cached_data(filename):
 def save_cached_data(df, filename):
     """
     Save data to cache file.
+    Updates the cache directory and performs cleanup if needed.
     
     Args:
         df: DataFrame to save
@@ -748,7 +898,22 @@ def save_cached_data(df, filename):
     """
     try:
         df.to_csv(filename, index=False)
-        print(f"Data cached to {filename}")
+        
+        # Update cache directory with file info
+        file_size = get_cache_file_size(filename)
+        update_cache_access_info(filename)  # This will set access_count to 1 for new files
+        
+        # Update the size in cache directory
+        cache_info = load_cache_directory()
+        if filename in cache_info:
+            cache_info[filename]['size_bytes'] = file_size
+            save_cache_directory(cache_info)
+        
+        print(f"Data cached to {filename} ({file_size / (1024*1024):.1f} MB)")
+        
+        # Check if cleanup is needed
+        cleanup_cache_if_needed()
+        
     except Exception as e:
         print(f"Error saving cached data to {filename}: {e}")
 

@@ -9,3 +9,4 @@
 
 # Ignore pycache
 __pycache__/
+cache/cache_directory.json
