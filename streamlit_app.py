@@ -24,6 +24,8 @@ DISASTERS = {'Flooding': 'flooding', 'Wildfire (in location)': 'wildfire (direct
              'Hurricanes': 'hurricanes', 'Tornados': 'tornados'}
 SCORES = {0: 'Hate', 25: 'Dislike', 50: 'Neutral', 75: 'Like', 100: 'Love'}
 SCORE_COLORS = ['#ba1535', '#ba6715', '#b7ba15', '#43ba15', '#158cba']
+# historical solid, forecast at 70% opacity (as in the original), interleaved per score
+DIST_COLORS = [c + a for c in SCORE_COLORS for a in ('', 'b3')]
 REASON_COLORS = {
     "neutral": "#158cba", "too hot, humid": "#3f15ba", "too hot, dry": "#7a15ba", "too cold, windy": "#ba15a1",
     "too cold, still": "#ba1535", "ideal sunny": "#ba6715", "ideal overcast": "#b7ba15", "light rain": "#43ba15",
@@ -65,8 +67,9 @@ def analyze(lat, lon, tz, city, state, score):
     dist = {}
     for v, name in SCORES.items():
         h = (hist[hist['score'] == v].groupby('year').size() / dpy).fillna(0)
-        f = pd.concat([(fore[fore[c] == v].groupby('year').size() / dpy).fillna(0) for c in sc], axis=1).mean(axis=1) if sc else 0
-        dist[name] = 100 * h.add(f, fill_value=0)
+        f = pd.concat([(fore[fore[c] == v].groupby('year').size() / dpy).fillna(0) for c in sc], axis=1).mean(axis=1) if sc else pd.Series(0.0, index=dpy.index)
+        # kept as separate stacked series so the overlap year shows its historical and forecast share
+        dist[name], dist[f"{name} (forecast)"] = 100 * h, 100 * f
 
     # Score average with forecast range across models
     ah = hist.groupby('year')['score'].mean()
@@ -95,7 +98,8 @@ def analyze(lat, lon, tz, city, state, score):
     g = pd.concat([fore.groupby('year')[c].value_counts().unstack(fill_value=0).reindex(columns=cols, fill_value=0)
                    for c in rc]).groupby(level=0)
     reasons = rh.add(g.mean(), fill_value=0)
-    rng = pd.concat({'min': rh.add(g.min(), fill_value=0), 'max': rh.add(g.max(), fill_value=0)}, axis=1)
+    rng = pd.concat({'historical': rh, 'forecast (mean)': g.mean(), 'combined min': rh.add(g.min(), fill_value=0),
+                     'combined max': rh.add(g.max(), fill_value=0)}, axis=1)
 
     # PM2.5 % of hours per year
     pm = pm.dropna(subset=[PM_COL]).assign(year=lambda d: pd.to_datetime(d['date']).dt.year)
@@ -103,7 +107,7 @@ def analyze(lat, lon, tz, city, state, score):
     pm25 = (pd.crosstab(pm['year'], cat).reindex(columns=list(PM25), fill_value=0)
             .div(pm.groupby('year').size(), axis=0) * 100)
 
-    return dict(dist=pd.DataFrame(dist), avg=avg, monthly=monthly, mcolors=mcolors,
+    return dict(dist=pd.DataFrame(dist).fillna(0), avg=avg, monthly=monthly, mcolors=mcolors,
                 reasons=reasons, range=rng, pm25=pm25, fy=fy)
 
 
@@ -228,12 +232,12 @@ if res['pts']:
 
 def reasons_chart(r):
     st.line_chart(r['reasons'], color=list(REASON_COLORS.values()))
-    with st.expander("Forecast range (min/max across models)"):
+    with st.expander("Historical vs forecast split and forecast range"):
         st.dataframe(r['range'])
 
 
 CHARTS = [
-    ("Score Distribution by Year (% of days)", lambda r: st.bar_chart(r['dist'], color=SCORE_COLORS)),
+    ("Score Distribution by Year (% of days)", lambda r: st.bar_chart(r['dist'], color=DIST_COLORS)),
     ("Score Average by Year", lambda r: st.line_chart(r['avg'], color=['#158cba', '#ba1535', '#999999', '#999999'])),
     ("Monthly Average Scores by Year (x: month 1-12)", lambda r: st.line_chart(r['monthly'], color=r['mcolors'])),
     ("Number of Days by Type (Reason) per Year", reasons_chart),
