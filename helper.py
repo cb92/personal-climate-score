@@ -419,7 +419,7 @@ def get_forecasted_data(lat, long, city_timezone, city, state, model, col_names=
         "latitude": lat,
         "longitude": long,
         "start_date": date.today(),
-        "end_date": date(date.today().year + 24, 12, 31),
+        "end_date": date(date.today().year + 7, 12, 31),
         "models": model,
         "daily": col_names
     }
@@ -562,7 +562,7 @@ def get_combined_forecasted_data(lat, long, city_timezone, city, state, models=N
             "latitude": lat,
             "longitude": long,
             "start_date": date.today(),
-            "end_date": date(date.today().year + 24, 12, 31),
+            "end_date": date(date.today().year + 7, 12, 31),
             "models": model,
             "daily": col_names
         }

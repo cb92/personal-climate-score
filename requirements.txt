@@ -7,4 +7,4 @@ dash
 dash-bootstrap-components
 plotly
 python-dotenv
-google-generativeai
+google-genai
