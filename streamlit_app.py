@@ -157,12 +157,12 @@ def chart(df, kind, colors, x_label, y_label, rule=None, bands=None):
 def avg_chart(r):
     a = r['avg']
     bands = band_df(a[['Lower Bound']].set_axis(['Forecasted'], axis=1), a[['Upper Bound']].set_axis(['Forecasted'], axis=1))
-    chart(a[['Historical', 'Forecasted']], 'line', ['#158cba', '#ba1535'], 'Year', 'Score Average', r['fy_min'], bands)
+    chart(a[['Historical', 'Forecasted']], 'line', ['#158cba', '#ba1535'], 'Year', 'Score Average', r['fy'], bands)
 
 
 def reasons_chart(r):
     rg = r['range']
-    chart(r['reasons'], 'line', list(REASON_COLORS.values()), 'Year', 'Number of Days', r['fy_min'],
+    chart(r['reasons'], 'line', list(REASON_COLORS.values()), 'Year', 'Number of Days', r['fy'],
           band_df(rg['combined min'], rg['combined max']))
     with st.expander("Historical vs forecast split and forecast range"):
         st.dataframe(rg)
@@ -265,7 +265,7 @@ if run or 'res' not in st.session_state:
             label = f"{city}, {state}"
             try:
                 lat, lon, tz, _ = get_city_info(city, state)
-                pts.append({'lat': lat, 'lon': lon})
+                pts.append({'lat': lat, 'lon': lon, 'city_state': label})
                 cities.append((label, analyze(lat, lon, tz, city, state, score)))
             except Exception as e:
                 cities.append((label, {'error': str(e)}))
@@ -284,12 +284,58 @@ if res['loc']:
 
 st.subheader("Selected Cities Map")
 if res['pts']:
-    st.map(pd.DataFrame(res['pts']), size=20000)
+    pts_df = pd.DataFrame(res["pts"])
 
+    # Create map feature layers (US states backdrop)
+    states = alt.topo_feature(
+        "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json", "states"
+    )
+
+    background = (
+        alt.Chart(states)
+        .mark_geoshape(fill="lightgray", stroke="white")
+        .properties(width=700, height=400)
+        .project("albersUsa")
+    )
+
+    # Plot point markers
+    points = (
+        alt.Chart(pts_df)
+        .mark_circle(size=100, color="red")
+        .encode(
+            latitude="lat:Q",
+            longitude="lon:Q",
+            tooltip=[alt.Tooltip("city_state:N", title="City")],
+        )
+    )
+
+    # Plot text labels offset slightly from points
+    labels = (
+        alt.Chart(pts_df)
+        .mark_text(
+            align="left",
+            dx=8,  # Offset label horizontally from the point
+            dy=-3,  # Offset label vertically
+            fontSize=11,
+            fontWeight="bold",
+        )
+        .encode(
+            latitude="lat:Q",
+            longitude="lon:Q",
+            text="city_state:N",
+        )
+    )
+
+    # Combine layers and render in Streamlit
+    map_chart = alt.layer(background, points, labels).properties(
+        title="Selected Cities"
+    )
+
+    st.altair_chart(map_chart, use_container_width=True)
 
 CHARTS = [
     ("Score Distribution by Year (% of days)",
-     lambda r: chart(r['dist'], 'bar', DIST_COLORS, 'Year', 'Percentage of Days', r['fy_min'])),
+     lambda r: chart(r['dist'], 'bar', DIST_COLORS, 'Year', 'Percentage of Days', r['fy'])),
     ("Score Average by Year", avg_chart),
     ("Monthly Average Scores by Year", lambda r: chart(r['monthly'], 'line', r['mcolors'], 'Month', 'Average Score')),
     ("Number of Days by Type (Reason) per Year", reasons_chart),
