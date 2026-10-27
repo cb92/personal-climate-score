@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from google import genai
 from helper import *
 import pandas as pd
+import altair as alt
 
 load_dotenv()
 st.set_page_config(page_title="Personalized Climate Score", layout="wide")
@@ -59,8 +60,8 @@ def analyze(lat, lon, tz, city, state, score):
         d['month'] = d['date'].dt.month
     sc = [c for c in fore.columns if c.startswith('score_')]
     rc = [c for c in fore.columns if c.startswith('reason_')]
-    hy = hist['year'].max()
-    fy = fore['year'].min() if len(fore) else hy
+    hy_max = hist['year'].max()
+    fy_min = fore['year'].min() if len(fore) else hy_max
 
     # Score distribution (% of days per year; historical + forecast share the first forecast year)
     dpy = pd.concat([hist[['year', 'date']], fore[['year', 'date']]]).drop_duplicates().groupby('year')['date'].nunique()
@@ -75,18 +76,18 @@ def analyze(lat, lon, tz, city, state, score):
     ah = hist.groupby('year')['score'].mean()
     per_model = fore.groupby('year')[sc].mean()
     af, lo, hi = per_model.mean(axis=1), per_model.min(axis=1), per_model.max(axis=1)
-    if hy == fy and len(fore):
-        nh = hist.loc[hist['year'] == hy, 'date'].nunique()
-        nf = fore.loc[fore['year'] == hy, 'date'].nunique()
+    if hy_max == fy_min and len(fore):
+        nh = hist.loc[hist['year'] == hy_max, 'date'].nunique()
+        nf = fore.loc[fore['year'] == hy_max, 'date'].nunique()
         wh, wf = nh / (nh + nf), nf / (nh + nf)
-        h = ah[hy]
-        af[hy], lo[hy], hi[hy] = h * wh + af[hy] * wf, h * wh + lo[hy] * wf, h * wh + hi[hy] * wf
-        ah[hy] = af[hy]
+        h = ah[hy_max] 
+        af[hy_max], lo[hy_max], hi[hy_max] = h * wh + af[hy_max] * wf, h * wh + lo[hy_max] * wf, h * wh + hi[hy_max] * wf
+        ah[hy_max] = af[hy_max]
     avg = pd.DataFrame({'Historical': ah, 'Forecasted': af, 'Lower Bound': lo, 'Upper Bound': hi})
 
     # Monthly average by year
-    mh = hist.groupby(['year', 'month'])['score'].mean().unstack(0)
-    mf = fore.groupby(['year', 'month'])[sc].mean().mean(axis=1).unstack(0).add_suffix(' (forecast)')
+    mh = hist.groupby(['year', 'month'])['score'].mean().unstack(0) #monthly_avg_hist
+    mf = fore.groupby(['year', 'month'])[sc].mean().mean(axis=1).unstack(0).add_suffix(' (forecast)') #monthly_avg_fore
     nh_, nf_ = len(mh.columns), len(mf.columns)
     mcolors = ([f"#158cba{int(255 * (0.2 + 0.8 * (i + 1) / nh_)):02x}" for i in range(nh_)]
                + [f"#ba1535{int(255 * (0.2 + 0.8 * (nf_ - i) / nf_)):02x}" for i in range(nf_)])
@@ -108,11 +109,37 @@ def analyze(lat, lon, tz, city, state, score):
             .div(pm.groupby('year').size(), axis=0) * 100)
 
     return dict(dist=pd.DataFrame(dist).fillna(0), avg=avg, monthly=monthly, mcolors=mcolors,
-                reasons=reasons, range=rng, pm25=pm25, fy=fy)
+                reasons=reasons, range=rng, pm25=pm25, fy_min=fy_min)
+
+def css(c):  # '#rrggbbaa' -> rgba() so Vega always parses the alpha
+    return f"rgba({int(c[1:3], 16)},{int(c[3:5], 16)},{int(c[5:7], 16)},{int(c[7:9], 16) / 255:.2f})" if len(c) == 9 else c
+
+
+def chart(df, kind, colors, x_label, y_label):
+    """Altair chart with axis titles and a legend that wraps onto multiple rows."""
+    d = df.rename_axis('x').reset_index().melt('x', var_name='series', value_name='y').dropna(subset=['y'])
+    d['series'] = d['series'].astype(str)
+    names = [str(c) for c in df.columns]
+    legend = alt.Legend(title=None, orient='bottom', columns=min(len(names), 3), labelLimit=300, symbolLimit=0)
+    color = alt.Color('series:N', scale=alt.Scale(domain=names, range=[css(c) for c in colors]), legend=legend)
+    if kind == 'bar':
+        base, x = alt.Chart(d).mark_bar(), alt.X('x:O', title=x_label, axis=alt.Axis(labelAngle=0))
+    else:
+        base, x = alt.Chart(d).mark_line(), alt.X('x:Q', title=x_label, axis=alt.Axis(format='d', tickMinStep=1))
+    ch = base.encode(x=x, y=alt.Y('y:Q', title=y_label), color=color,
+                     tooltip=[alt.Tooltip('x:O', title=x_label), alt.Tooltip('series:N', title='Series'),
+                              alt.Tooltip('y:Q', title=y_label, format='.2f')])
+    st.altair_chart(ch, width='stretch')
+
+
+def reasons_chart(r):
+    chart(r['reasons'], 'line', list(REASON_COLORS.values()), 'Year', 'Number of Days')
+    with st.expander("Historical vs forecast split and forecast range"):
+        st.dataframe(r['range'])
 
 
 # ---------------- UI ----------------
-st.title("Climate Score Dashboard")
+st.title("Personalized Climate Score Dashboard")
 st.write(
     "This dashboard helps you compare the climate and environmental conditions of up to three US cities based on your "
     "personal preferences. Enter the names and states of the US cities you want to compare, then adjust the sidebar controls to "
@@ -229,19 +256,12 @@ st.subheader("Selected Cities Map")
 if res['pts']:
     st.map(pd.DataFrame(res['pts']), size=20000)
 
-
-def reasons_chart(r):
-    st.line_chart(r['reasons'], color=list(REASON_COLORS.values()))
-    with st.expander("Historical vs forecast split and forecast range"):
-        st.dataframe(r['range'])
-
-
 CHARTS = [
-    ("Score Distribution by Year (% of days)", lambda r: st.bar_chart(r['dist'], color=DIST_COLORS)),
-    ("Score Average by Year", lambda r: st.line_chart(r['avg'], color=['#158cba', '#ba1535', '#999999', '#999999'])),
-    ("Monthly Average Scores by Year (x: month 1-12)", lambda r: st.line_chart(r['monthly'], color=r['mcolors'])),
+    ("Score Distribution by Year (% of days)", lambda r: chart(r['dist'], 'bar', DIST_COLORS, 'Year', 'Percentage of Days')),
+    ("Score Average by Year", lambda r: chart(r['avg'], 'line', ['#158cba', '#ba1535', '#999999', '#999999'], 'Year', 'Score Average')),
+    ("Monthly Average Scores by Year", lambda r: chart(r['monthly'], 'line', r['mcolors'], 'Month', 'Average Score')),
     ("Number of Days by Type (Reason) per Year", reasons_chart),
-    ("PM2.5 Air Quality Distribution by Year (% of hours)", lambda r: st.bar_chart(r['pm25'], color=PM25_COLORS)),
+    ("PM2.5 Air Quality Distribution by Year (% of hours)", lambda r: chart(r['pm25'], 'bar', PM25_COLORS, 'Year', 'Percentage of Hours')),
 ]
 for title, draw in CHARTS:
     st.subheader(title)
@@ -250,7 +270,7 @@ for title, draw in CHARTS:
             if 'error' in r:
                 st.error(f"{label}: {r['error']}")
             else:
-                st.caption(f"{label} (forecast begins {r['fy']})")
+                st.caption(f"{label} (forecast begins {r['fy_min']})")
                 draw(r)
 
 st.markdown(res['suggestions'])
