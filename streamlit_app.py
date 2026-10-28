@@ -151,7 +151,7 @@ def chart(df, kind, colors, x_label, y_label, rule=None, bands=None):
         layers.append(alt.Chart(pd.DataFrame({'x': [rule], 'label': [f'Forecast begins {rule}']}))
                       .mark_rule(strokeDash=[6, 4], color='#888888', strokeWidth=2)
                       .encode(x=x, tooltip=['label:N']))
-    st.altair_chart(alt.layer(*layers), width = 'content')
+    st.altair_chart(alt.layer(*layers), width = 'stretch')
 
 
 def avg_chart(r):
@@ -332,7 +332,7 @@ if res['pts']:
         title="Selected Cities"
     )
 
-    st.altair_chart(map_chart, width = 'content')
+    st.altair_chart(map_chart, width = 'stretch')
 
 CHARTS = [
     ("Score Distribution by Year (% of days)",
