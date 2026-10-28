@@ -11,8 +11,8 @@ import openmeteo_requests
 import os
 import hashlib
 import json
-import time
-from pathlib import Path
+import functools
+import mysql.connector
 
 
 class Score:
@@ -155,20 +155,6 @@ def get_unit_name(unit_value):
             return name
     return f"unknown({unit_value})"
 
-
-def get_variable_name(var_value):
-    for name, value in Variable.__dict__.items():
-        if value == var_value and not name.startswith("__"):
-            return name
-    return f"unknown({var_value})"
-
-def hex_to_rgba(hex_color, alpha):
-    """Converts a hex color code to an RGBA string with specified alpha."""
-    hex_color = hex_color.lstrip('#')
-    rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-    return f"rgba({rgb[0]}, {rgb[1]}, {rgb[2]}, {alpha})"
-
-
 def extract_data_from_api_response(timeseries, cols, hourly = True, timezone = 'America/Los_Angeles'):
 	if hourly:
 		datetime_index = pd.date_range(
@@ -214,65 +200,6 @@ def extract_data_from_api_response(timeseries, cols, hourly = True, timezone = '
 def f_to_c(fahrenheit):
 	return (fahrenheit - 32)*5/9
 
-
-def daily_climate_score__hourly(temperature_arr, 
-								dew_point_arr, 
-								rain_arr, 
-								snowfall_arr, 
-								wind_arr, 
-								cloud_cover_arr,
-								score_obj):
-	score = 0
-	reason = "neutral"
-    #this if/elif loop should logically be disjoint
-	if (np.max(temperature_arr) > f_to_c(score_obj.humid_day_max) and np.min(dew_point_arr) > f_to_c(60)):
-		score = score_obj.humid_day_coef
-		reason = "too hot, humid"
-	elif (np.max(temperature_arr) > f_to_c(score_obj.dry_heat_day_min) and np.min(dew_point_arr) <= f_to_c(60)):
-		score = score_obj.dry_heat_day_coef
-		reason = "too hot, dry"
-	elif (np.max(temperature_arr) < f_to_c(score_obj.too_cold_windy__max) and np.mean(wind_arr) > 30):
-		score = score_obj.too_cold_windy__coef
-		reason = "too cold, windy"
-	elif (np.max(temperature_arr) < f_to_c(score_obj.too_cold_still__max) and np.mean(wind_arr) < 30):
-		score = score_obj.too_cold_still__coef
-		reason = "too cold, still"
-	elif (np.max(temperature_arr) > f_to_c(score_obj.ideal_temp__min) and np.max(temperature_arr) < f_to_c(score_obj.ideal_temp__max)):
-		if (np.mean(cloud_cover_arr) < 60 and np.sum(rain_arr) < 2):
-			score = score_obj.ideal_sunny_day__coef
-			reason = "ideal sunny"
-		elif (np.mean(cloud_cover_arr) >=60 and np.sum(rain_arr) < 2):
-			score = score_obj.overcast_dry__coef
-			reason = "ideal overcast"
-	# Precipitation overrides
-	if (np.sum(rain_arr) >= 2 and np.sum(rain_arr) < 10):
-		if reason == 'neutral':
-			score = score_obj.light_rain__coef
-			reason = 'light rain'
-		else:
-			prev_score = score
-			score = np.min([score, score_obj.light_rain__coef])
-			if score == score_obj.light_rain__coef or score < prev_score:
-				reason = "light rain"
-	elif (np.sum(rain_arr) >= 10):
-		if reason == 'neutral':
-			score = score_obj.heavy_rain__coef
-			reason = "heavy rain"
-		else:
-			prev_score = score
-			score = np.min([score, score_obj.heavy_rain__coef])
-			if score == score_obj.heavy_rain__coef or score < prev_score:
-				reason = "heavy rain"
-	elif (np.sum(snowfall_arr) > 1):
-		if reason == 'neutral':
-			score = score_obj.snow_coef
-			reason = "snow"
-		else:
-			prev_score = score
-			score = np.min([score, score_obj.snow_coef])
-			if score == score_obj.snow_coef or score < prev_score:
-				reason = "snow"
-	return (score + 2) * 25, reason
 
 def daily_climate_score__daily(temperature_max, 
 								dew_point_min,
@@ -345,20 +272,19 @@ def get_city_info(city, state):
     return info['latitude'], info['longitude'], info['timezone'], info.get('population', None)
 
 
-def get_historical_and_aqi_data(lat, long, city_timezone, city, state, col_names=None, save_csv=True):
+def get_historical_and_aqi_data(lat, long, city_timezone, city, state, col_names=None, save_todb=True):
     if col_names is None:
         col_names = [
             "temperature_2m_max", "dew_point_2m_min", "rain_sum", "snowfall_sum", "cloud_cover_mean", "wind_speed_10m_mean"
         ]
-    # Check cache first
-    cache_filename_weather = get_cache_filename("historical_daily", city, state)
-    cache_filename_pm25 = get_cache_filename("historical_pm25", city, state)
-    cached_weather = load_cached_data(cache_filename_weather)
-    cached_pm25 = load_cached_data(cache_filename_pm25)
-    if cached_weather is not None and cached_pm25 is not None:
-        print(f"Loading historical daily weather from cache: {cache_filename_weather}")
-        print(f"Loading historical pm2.5 from cache: {cache_filename_pm25}")
-        return cached_weather, cached_pm25, cache_filename_weather, cache_filename_pm25
+    # Check database first
+    city_id = get_or_create_city_id(city, state, lat, long, city_timezone)
+    if city_id is not None:
+        db_weather = load_historical_weather(city_id)
+        db_pm25 = load_historical_aqi(city_id, city_timezone)
+        if db_weather is not None and db_pm25 is not None:
+            print(f"Loading historical daily weather and pm2.5 for {city}, {state} from database")
+            return db_weather, db_pm25
 
     print(f"Fetching historical daily weather for {city}, {state} from API...")
     openmeteo = openmeteo_requests.Client()
@@ -390,70 +316,27 @@ def get_historical_and_aqi_data(lat, long, city_timezone, city, state, col_names
     responses = openmeteo.weather_api(url, params=params)
     df_historical_aqi = extract_data_from_api_response(responses[0].Hourly(), aqi_col_names, timezone=city_timezone)
 
-    # Save to cache
-    if save_csv:
-        save_cached_data(df_historical_weather, cache_filename_weather)
-        save_cached_data(df_historical_aqi, cache_filename_pm25)
-    else:
-        cache_filename_weather = None
-        cache_filename_pm25 = None
+    # Save to database
+    if save_todb and city_id is not None:
+        save_historical_weather(city_id, df_historical_weather)
+        save_historical_aqi(city_id, df_historical_aqi)
 
-    return df_historical_weather, df_historical_aqi, cache_filename_weather, cache_filename_pm25
-
-
-def get_forecasted_data(lat, long, city_timezone, city, state, model, col_names=None, save_csv=True):
-    if col_names is None:
-        col_names = ["temperature_2m_max", "wind_speed_10m_mean", "dew_point_2m_min", "rain_sum", "cloud_cover_mean", "snowfall_sum"]
-    
-    # Check cache first
-    cache_filename = get_cache_filename("forecasted", city, state, model)
-    cached_df = load_cached_data(cache_filename)
-    if cached_df is not None:
-        print(f"Loading forecasted data from cache: {cache_filename}")
-        return cached_df, cache_filename
-    
-    print(f"Fetching forecasted data for {city}, {state} with model {model} from API...")
-    openmeteo = openmeteo_requests.Client()
-    url = "https://climate-api.open-meteo.com/v1/climate"
-    params = {
-        "latitude": lat,
-        "longitude": long,
-        "start_date": date.today(),
-        "end_date": date(date.today().year + 7, 12, 31),
-        "models": model,
-        "daily": col_names
-    }
-    responses = openmeteo.weather_api(url, params=params)
-    df_single_model = extract_data_from_api_response(responses[0].Daily(), col_names, hourly=False, timezone=city_timezone)
-    df_single_model.columns = [
-        col if col == 'date' else col + f'__{model}'
-        for col in df_single_model.columns
-    ]
-    
-    # Save to cache
-    if save_csv:
-        save_cached_data(df_single_model, cache_filename)
-    else:   
-        cache_filename = None
-    return df_single_model, cache_filename
+    return df_historical_weather, df_historical_aqi
 
 
 def process_historical_for_plotting(df, climate_score, city=None, state=None):
-    # Check cache first if city and state are provided
-    if city and state:
-        score_params = climate_score.get_all_parameters()
-        cache_filename = get_cache_filename("historical_score", city, state, score_params=score_params)
-        cached_df = load_cached_data(cache_filename)
-        if cached_df is not None:
-            print(f"Loading historical score data from cache: {cache_filename}")
-            # Extract reasons from the cached data (assuming they're stored in a separate column or we can reconstruct them)
-            reasons = cached_df["reason"].tolist() if "reason" in cached_df.columns else []
-            return cached_df, reasons
+    # Check database first if city and state are provided
+    city_id = get_city_id(city, state) if city and state else None
+    score_params = climate_score.get_all_parameters()
+    if city_id is not None:
+        db_df = load_historical_scores(city_id, score_params)
+        if db_df is not None:
+            print(f"Loading historical score data for {city}, {state} from database")
+            return db_df
 
     print("Processing historical daily data for plotting...")
     df["date"] = df["date"].astype(str)
     scores = []
-    reasons = []
     for idx, row in df.iterrows():
         # Use daily scoring function
         score, reason = daily_climate_score__daily(
@@ -467,63 +350,18 @@ def process_historical_for_plotting(df, climate_score, city=None, state=None):
             climate_score
         )
         scores.append((row["date"], score, reason))
-        reasons.append(reason)
     score_df = pd.DataFrame(scores, columns=["date", "score", "reason"])
     score_df["date"] = pd.to_datetime(score_df["date"])
     score_df["year"] = score_df["date"].dt.year
 
-    # Save to cache if city and state are provided
-    if city and state:
-        score_params = climate_score.get_all_parameters()
-        cache_filename = get_cache_filename("historical_score", city, state, score_params=score_params)
-        save_cached_data(score_df, cache_filename)
+    # Save to database if city and state are provided
+    if city_id is not None:
+        save_historical_scores(city_id, score_params, score_df)
 
-    return score_df, reasons
+    return score_df
 
 
-def process_forecasted_for_plotting(df, climate_score, model="NICAM16_8S", city=None, state=None):
-    # Check cache first if city and state are provided
-    if city and state: 
-        score_params = climate_score.get_all_parameters()
-        cache_filename = get_cache_filename("forecasted_score", city, state, model, score_params)
-        cached_df = load_cached_data(cache_filename)
-        if cached_df is not None:
-            print(f"Loading forecasted score data from cache: {cache_filename}")
-            # Extract reasons from the cached data
-            reasons = cached_df["reason"].tolist() if "reason" in cached_df.columns else []
-            return cached_df, reasons
-    
-    print(f"Processing forecasted data for plotting with model {model}...")
-    df["date"] = df["date"].astype(str)
-    scores_forecasted = []
-    reasons_forecasted = []
-    for index, row in df.iterrows():
-        date_val = row['date']
-        score, reason = daily_climate_score__daily(
-            row[f'temperature_2m_max__celsius__{model}'],
-            row[f'dew_point_2m_min__celsius__{model}'],
-            row[f'wind_speed_10m_mean__kilometres_per_hour__{model}'],
-            row[f'cloud_cover_mean__percentage__{model}'],
-            row[f'rain_sum__millimetre__{model}'],
-            row[f'snowfall_sum__centimetre__{model}'],
-            climate_score.scaling_factor,
-            climate_score)
-        scores_forecasted.append((date_val, score, reason))
-        reasons_forecasted.append(reason)
-    score_df_forecasted = pd.DataFrame(scores_forecasted, columns=["date", "score", "reason"])
-    score_df_forecasted["date"] = pd.to_datetime(score_df_forecasted["date"])
-    score_df_forecasted["year"] = score_df_forecasted["date"].dt.year
-    
-    # Save to cache if city and state are provided
-    if city and state:
-        score_params = climate_score.get_all_parameters()
-        cache_filename = get_cache_filename("forecasted_score", city, state, model, score_params)
-        save_cached_data(score_df_forecasted, cache_filename)
-    
-    return score_df_forecasted, reasons_forecasted
-
-
-def get_combined_forecasted_data(lat, long, city_timezone, city, state, models=None, col_names=None, save_csv=True):
+def get_combined_forecasted_data(lat, long, city_timezone, city, state, models=None, col_names=None, save_todb=True):
     """
     Fetch forecasted data for multiple models and return a combined dataframe.
     
@@ -533,23 +371,25 @@ def get_combined_forecasted_data(lat, long, city_timezone, city, state, models=N
         city, state: location identifiers
         models: list of model names to fetch data for
         col_names: list of column names to fetch
-        save_csv: whether to save to cache
+        save_csv: whether to save to the database
     
     Returns:
         combined_df: DataFrame with date/year columns and model-specific score/reason columns
-        cache_filename: cache filename if saved, None otherwise
+        None (kept so the return shape is unchanged)
     """
     if models is None:
         models = ["EC_Earth3P_HR", "MRI_AGCM3_2_S", "NICAM16_8S"]
     if col_names is None:
         col_names = ["temperature_2m_max", "wind_speed_10m_mean", "dew_point_2m_min", "rain_sum", "cloud_cover_mean", "snowfall_sum"]
     
-    # Check cache first
-    cache_filename = get_cache_filename("combined_forecasted", city, state, models=models)
-    cached_df = load_cached_data(cache_filename)
-    if cached_df is not None:
-        print(f"Loading combined forecasted data from cache: {cache_filename}")
-        return cached_df, cache_filename
+    # Check database first
+    city_id = get_or_create_city_id(city, state, lat, long, city_timezone)
+    if city_id is not None:
+        db_df = load_forecasted_weather(city_id, models)
+        if db_df is not None:
+            db_df['year'] = pd.to_datetime(db_df['date']).dt.year
+            print(f"Loading combined forecasted data for {city}, {state} from database")
+            return db_df
     
     print(f"Fetching combined forecasted data for {city}, {state} with models {models} from API...")
     openmeteo = openmeteo_requests.Client()
@@ -584,13 +424,12 @@ def get_combined_forecasted_data(lat, long, city_timezone, city, state, models=N
     # Add year column
     combined_df['year'] = pd.to_datetime(combined_df['date']).dt.year
     
-    # Save to cache
-    if save_csv:
-        save_cached_data(combined_df, cache_filename)
-    else:   
-        cache_filename = None
+    # Save to database
+    if save_todb and city_id is not None:
+        for model in models:
+            save_forecasted_weather(city_id, model, combined_df)
     
-    return combined_df, cache_filename
+    return combined_df
 
 
 def process_combined_forecasted_for_plotting(df, climate_score, models=None, city=None, state=None):
@@ -601,36 +440,32 @@ def process_combined_forecasted_for_plotting(df, climate_score, models=None, cit
         df: combined forecasted dataframe with model-specific columns
         climate_score: Score object with preferences
         models: list of model names
-        city, state: location identifiers for caching
+        city, state: location identifiers for database storage
     
     Returns:
         processed_df: DataFrame with date, year, and model-specific score/reason columns
-        all_reasons: list of all unique reasons across all models
     """
     if models is None:
         models = ["EC_Earth3P_HR", "MRI_AGCM3_2_S", "NICAM16_8S"]
     
-    # Check cache first if city and state are provided
-    if city and state:
-        score_params = climate_score.get_all_parameters()
-        cache_filename = get_cache_filename("combined_forecasted_score", city, state, models=models, score_params=score_params)
-        cached_df = load_cached_data(cache_filename)
-        if cached_df is not None:
-            print(f"Loading combined forecasted score data from cache: {cache_filename}")
-            # Extract reasons from the cached data
-            all_reasons = []
+    # Check database first if city and state are provided
+    city_id = get_city_id(city, state) if city and state else None
+    score_params = climate_score.get_all_parameters()
+    if city_id is not None:
+        db_long = load_forecasted_scores(city_id, score_params, models)
+        if db_long is not None:
+            print(f"Loading combined forecasted score data for {city}, {state} from database")
+            combined_db_df = db_long[['date', 'year']].drop_duplicates('date').reset_index(drop=True)
             for model in models:
-                reason_col = f'reason_{model}'
-                if reason_col in cached_df.columns:
-                    all_reasons.extend(cached_df[reason_col].dropna().unique().tolist())
-            all_reasons = list(set(all_reasons))
-            return cached_df, all_reasons
+                by_date = db_long[db_long['model_name'] == model].set_index('date')
+                combined_db_df[f'score_{model}'] = combined_db_df['date'].map(by_date['score'])
+                combined_db_df[f'reason_{model}'] = combined_db_df['date'].map(by_date['reason'])
+            return combined_db_df
     
     print(f"Processing combined forecasted data for plotting with models {models}...")
     
     # Initialize result dataframe with date and year
     result_df = df[['date', 'year']].copy()
-    all_reasons = []
     
     # Process each model
     for model in models:
@@ -651,271 +486,250 @@ def process_combined_forecasted_for_plotting(df, climate_score, models=None, cit
             )
             scores_model.append(score)
             reasons_model.append(reason)
-            all_reasons.append(reason)
         
         # Add model-specific columns
         result_df[f'score_{model}'] = scores_model
         result_df[f'reason_{model}'] = reasons_model
-    
-    # Remove duplicates from all_reasons
-    all_reasons = list(set(all_reasons))
-    
-    # Save to cache if city and state are provided
-    if city and state:
-        score_params = climate_score.get_all_parameters()
-        cache_filename = get_cache_filename("combined_forecasted_score", city, state, models=models, score_params=score_params)
-        save_cached_data(result_df, cache_filename)
-    
-    return result_df, all_reasons
-
-
-def get_cache_filename(data_type, city, state, model=None, score_params=None, models=None):
-    """
-    Generate cache filename based on data type and parameters.
-    
-    Args:
-        data_type: 'historical_hourly', 'forecasted', 'historical_score', 'forecasted_score', 'historical_daily', 'historical_pm25', 'combined_forecasted', 'combined_forecasted_score'
-        city: city name
-        state: state name
-        model: model name (for forecasted data)
-        score_params: score parameters dict (for score data)
-        models: list of model names (for combined forecasted data)
-    
-    Returns:
-        cache filename string
-    """
-    # Create cache directory if it doesn't exist
-    cache_dir = "cache"
-    if not os.path.exists(cache_dir):
-        os.makedirs(cache_dir)
-    
-    if data_type == "historical_hourly":
-        return os.path.join(cache_dir, f"{city}_{state}_historical_hourly.csv")
-    elif data_type == "historical_daily":
-        return os.path.join(cache_dir, f"{city}_{state}_historical_daily.csv")
-    elif data_type == "historical_pm25":
-        return os.path.join(cache_dir, f"{city}_{state}_historical_pm25.csv")
-    elif data_type == "forecasted":
-        return os.path.join(cache_dir, f"{city}_{state}_{model}_forecasted_data.csv")
-    elif data_type == "historical_score":
-        # Create hash of score parameters for filename
-        score_hash = hashlib.md5(json.dumps(score_params, sort_keys=True).encode()).hexdigest()[:8]
-        return os.path.join(cache_dir, f"{city}_{state}_historical_score_{score_hash}.csv")
-    elif data_type == "forecasted_score":
-        # Create hash of score parameters for filename
-        score_hash = hashlib.md5(json.dumps(score_params, sort_keys=True).encode()).hexdigest()[:8]
-        return os.path.join(cache_dir, f"{city}_{state}_{model}_forecasted_score_{score_hash}.csv")
-    elif data_type == "combined_forecasted":
-        models_str = '_'.join(models) if models else 'all_models'
-        return os.path.join(cache_dir, f"{city}_{state}_{models_str}_combined_forecasted_data.csv")
-    elif data_type == "combined_forecasted_score":
-        # Create hash of score parameters for filename
-        score_hash = hashlib.md5(json.dumps(score_params, sort_keys=True).encode()).hexdigest()[:8]
-        models_str = '_'.join(models) if models else 'all_models'
-        return os.path.join(cache_dir, f"{city}_{state}_{models_str}_combined_forecasted_score_{score_hash}.csv")
-    else:
-        raise ValueError(f"Unknown data_type: {data_type}")
-
-
-def get_cache_directory_file():
-    """
-    Get the path to the cache directory file.
-    
-    Returns:
-        Path to the cache directory file
-    """
-    cache_dir = "cache"
-    if not os.path.exists(cache_dir):
-        os.makedirs(cache_dir)
-    return os.path.join(cache_dir, "cache_directory.json")
-
-
-def load_cache_directory():
-    """
-    Load the cache directory information from file.
-    
-    Returns:
-        Dictionary containing cache file information
-    """
-    directory_file = get_cache_directory_file()
-    if os.path.exists(directory_file):
-        try:
-            with open(directory_file, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Error loading cache directory: {e}")
-            return {}
-    return {}
-
-
-def save_cache_directory(cache_info):
-    """
-    Save the cache directory information to file.
-    
-    Args:
-        cache_info: Dictionary containing cache file information
-    """
-    directory_file = get_cache_directory_file()
-    try:
-        with open(directory_file, 'w') as f:
-            json.dump(cache_info, f, indent=2)
-    except Exception as e:
-        print(f"Error saving cache directory: {e}")
-
-
-def update_cache_access_info(filename):
-    """
-    Update the access information for a cache file.
-    Increments access count and updates last access time.
-    
-    Args:
-        filename: Path to the cache file
-    """
-    cache_info = load_cache_directory()
-    current_time = time.time()
-    
-    if filename in cache_info:
-        # Increment access count and update last access time
-        cache_info[filename]['access_count'] = cache_info[filename].get('access_count', 0) + 1
-        cache_info[filename]['last_accessed'] = current_time
-    else:
-        # If file doesn't exist in directory, get its size
-        file_size = 0
-        if os.path.exists(filename):
-            try:
-                file_size = os.path.getsize(filename)
-            except OSError:
-                file_size = 0
         
-        cache_info[filename] = {
-            'last_accessed': current_time,
-            'size_bytes': file_size,
-            'access_count': 1  # Initialize access count to 1 for new files
-        }
+    # Save to database if city and state are provided
+    if city_id is not None:
+        for model in models:
+            model_df = pd.DataFrame({
+                'date': result_df['date'], 'year': result_df['year'],
+                'score': result_df[f'score_{model}'], 'reason': result_df[f'reason_{model}']
+            })
+            save_forecasted_scores(city_id, score_params, model, model_df)
     
-    save_cache_directory(cache_info)
+    return result_df
 
 
-def get_cache_file_size(filename):
-    """
-    Get the size of a cache file in bytes.
-    
-    Args:
-        filename: Path to the cache file
-    
-    Returns:
-        File size in bytes, 0 if file doesn't exist
-    """
-    try:
-        return os.path.getsize(filename) if os.path.exists(filename) else 0
-    except OSError:
-        return 0
+####### Database access (schema in setup.sql)
+# Connection settings come from RAILWAY_DB_HOST / _PORT / _USER / _PASSWORD / _NAME in the environment (.env).
+# Every value is passed to MySQL as a bound %s parameter. The only text that is ever formatted into a query is
+# module constants (table/column names) and "%s" placeholder lists, never user input.
+WEATHER_COLS = [
+    "temperature_2m_max__celsius", "dew_point_2m_min__celsius", "rain_sum__millimetre",
+    "snowfall_sum__centimetre", "cloud_cover_mean__percentage", "wind_speed_10m_mean__kilometres_per_hour"
+]
+AQI_COL = "pm2_5__micrograms_per_cubic_metre"
 
 
-def cleanup_cache_if_needed(max_size_mb=100):
-    """
-    Clean up cache files if total size exceeds 100 MB.
-    Keeps the most recently accessed files that fit within 100 MB.
-    """
-    cache_info = load_cache_directory()
-    
-    # Calculate total cache size
-    total_size = sum(info.get('size_bytes', 0) for info in cache_info.values())
-    max_cache_size = max_size_mb * 1024 * 1024  # 100 MB in bytes
-    
-    if total_size <= max_cache_size:
-        return
-    
-    print(f"Cache size ({total_size / (1024*1024):.1f} MB) exceeds limit (100 MB). Cleaning up...")
-    
-    # Sort files by last access time (most recent first)
-    sorted_files = sorted(
-        cache_info.items(),
-        key=lambda x: x[1].get('last_accessed', 0),
-        reverse=True
-    )
-    
-    # Keep files until we're under the limit
-    files_to_keep = []
-    current_size = 0
-    
-    for filename, info in sorted_files:
-        file_size = info.get('size_bytes', 0)
-        if current_size + file_size <= max_cache_size:
-            files_to_keep.append(filename)
-            current_size += file_size
-        else:
-            # Delete this file
-            try:
-                if os.path.exists(filename):
-                    os.remove(filename)
-                    print(f"Deleted cache file: {filename}")
-            except OSError as e:
-                print(f"Error deleting cache file {filename}: {e}")
-    
-    # Update cache directory with only kept files
-    new_cache_info = {filename: cache_info[filename] for filename in files_to_keep}
-    save_cache_directory(new_cache_info)
-    
-    print(f"Cache cleanup complete. New size: {current_size / (1024*1024):.1f} MB")
-
-
-def load_cached_data(filename):
-    """
-    Load data from cache file if it exists.
-    Updates the access information for the file.
-    
-    Args:
-        filename: cache filename
-    
-    Returns:
-        DataFrame if file exists, None otherwise
-    """
-    if os.path.exists(filename):
+def _db_safe(fn):
+    """On any database error, print it and return None so callers fall back to the API."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
         try:
-            # Update access information (increments access count)
-            update_cache_access_info(filename)
-            
-            df = pd.read_csv(filename)
-            # Convert date columns back to datetime
-            if 'date' in df.columns:
-                df['date'] = pd.to_datetime(df['date'])
-            return df
+            return fn(*args, **kwargs)
         except Exception as e:
-            print(f"Error loading cached data from {filename}: {e}")
+            print(f"Database error in {fn.__name__}: {e}")
             return None
-    return None
+    return wrapper
 
 
-def save_cached_data(df, filename):
-    """
-    Save data to cache file.
-    Updates the cache directory and performs cleanup if needed.
-    
-    Args:
-        df: DataFrame to save
-        filename: cache filename
-    """
+def get_db_connection():
+    return mysql.connector.connect(
+        host=os.getenv("RAILWAY_DB_HOST"),
+        port=int(os.getenv("RAILWAY_DB_PORT", "3306")),
+        user=os.getenv("RAILWAY_DB_USER"),
+        password=os.getenv("RAILWAY_DB_PASSWORD"),
+        database=os.getenv("RAILWAY_DB_NAME"),
+    )
+
+
+def _query_df(sql, params=()):
+    """Run a parameterized SELECT and return the rows as a DataFrame."""
+    conn = get_db_connection()
     try:
-        df.to_csv(filename, index=False)
-        
-        # Update cache directory with file info
-        file_size = get_cache_file_size(filename)
-        update_cache_access_info(filename)  # This will set access_count to 1 for new files
-        
-        # Update the size in cache directory
-        cache_info = load_cache_directory()
-        if filename in cache_info:
-            cache_info[filename]['size_bytes'] = file_size
-            save_cache_directory(cache_info)
-        
-        print(f"Data cached to {filename} ({file_size / (1024*1024):.1f} MB)")
-        
-        # Check if cleanup is needed
-        cleanup_cache_if_needed()
-        
-    except Exception as e:
-        print(f"Error saving cached data to {filename}: {e}")
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        return pd.DataFrame(cur.fetchall(), columns=cur.column_names)
+    finally:
+        conn.close()
+
+
+def _execute_many(statements):
+    """Run [(parameterized_sql, list_of_row_tuples), ...] in a single transaction."""
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        for sql, rows in statements:
+            cur.executemany(sql, rows)
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def _py(v):
+    """numpy/pandas scalar -> plain Python value (NaN -> None) so MySQL accepts it."""
+    if v is None or pd.isna(v):
+        return None
+    return v.item() if hasattr(v, "item") else v
+
+
+def _config_hash(score_params):
+    return hashlib.md5(json.dumps(score_params, sort_keys=True).encode()).hexdigest()
+
+
+def _config_statement(score_params):
+    p = score_params
+    return (
+        "INSERT INTO score_configurations (config_hash, parameters_json, min_time, max_time, scaling_factor, "
+        "ideal_temp_min, ideal_temp_max) VALUES (%s, %s, %s, %s, %s, %s, %s) "
+        "ON DUPLICATE KEY UPDATE config_hash = config_hash",
+        [(_config_hash(p), json.dumps(p, sort_keys=True), p["min_time"], p["max_time"], p["scaling_factor"],
+          p["ideal_temp__min"], p["ideal_temp__max"])]
+    )
+
+
+@_db_safe
+def get_city_id(city, state):
+    """city_id for an existing city, or None."""
+    df = _query_df("SELECT city_id FROM cities WHERE city_name = %s AND state_name = %s", (city, state))
+    return int(df.iloc[0, 0]) if not df.empty else None
+
+
+@_db_safe
+def get_or_create_city_id(city, state, lat, long, timezone):
+    _execute_many([(
+        "INSERT INTO cities (city_name, state_name, latitude, longitude, timezone) VALUES (%s, %s, %s, %s, %s) "
+        "ON DUPLICATE KEY UPDATE latitude = VALUES(latitude), longitude = VALUES(longitude), timezone = VALUES(timezone)",
+        [(city, state, float(lat), float(long), timezone)]
+    )])
+    return get_city_id(city, state)
+
+
+# ---- historical daily weather ----
+@_db_safe
+def save_historical_weather(city_id, df):
+    days = pd.to_datetime(df["date"]).dt.date
+    rows = [(city_id, day) + tuple(_py(v) for v in vals)
+            for day, vals in zip(days, df[WEATHER_COLS].itertuples(index=False, name=None))]
+    marks = ", ".join(["%s"] * (len(WEATHER_COLS) + 2))
+    updates = ", ".join(f"{c} = VALUES({c})" for c in WEATHER_COLS)
+    return _execute_many([(
+        f"INSERT INTO historical_daily_weather (city_id, date, {', '.join(WEATHER_COLS)}) VALUES ({marks}) "
+        f"ON DUPLICATE KEY UPDATE {updates}", rows
+    )])
+
+
+@_db_safe
+def load_historical_weather(city_id):
+    df = _query_df(f"SELECT date, {', '.join(WEATHER_COLS)} FROM historical_daily_weather "
+                   "WHERE city_id = %s ORDER BY date", (city_id,))
+    if df.empty:
+        return None
+    df["date"] = pd.to_datetime(df["date"])
+    return df
+
+
+# ---- historical hourly pm2.5 (datetime stored in UTC so DST repeats can't collide; date is the local date) ----
+@_db_safe
+def save_historical_aqi(city_id, df):
+    utc = pd.to_datetime(df["datetime"], utc=True)
+    days = pd.to_datetime(df["date"]).dt.date
+    rows = [(city_id, ts.to_pydatetime().replace(tzinfo=None), day, _py(v))
+            for ts, day, v in zip(utc, days, df[AQI_COL])]
+    return _execute_many([(
+        f"INSERT INTO historical_hourly_aqi (city_id, datetime, date, {AQI_COL}) VALUES (%s, %s, %s, %s) "
+        f"ON DUPLICATE KEY UPDATE date = VALUES(date), {AQI_COL} = VALUES({AQI_COL})", rows
+    )])
+
+
+@_db_safe
+def load_historical_aqi(city_id, timezone):
+    df = _query_df(f"SELECT datetime, date, {AQI_COL} FROM historical_hourly_aqi "
+                   "WHERE city_id = %s ORDER BY datetime", (city_id,))
+    if df.empty:
+        return None
+    df["datetime"] = pd.to_datetime(df["datetime"]).dt.tz_localize("UTC").dt.tz_convert(timezone)
+    df["date"] = pd.to_datetime(df["date"])
+    df.insert(2, "time", df["datetime"].dt.time)
+    return df
+
+
+# ---- forecasted daily weather (one row per model per day; df columns are "<var>__<model>") ----
+@_db_safe
+def save_forecasted_weather(city_id, model, df):
+    cols = [f"{c}__{model}" for c in WEATHER_COLS]
+    sub = df[["date"] + cols].dropna(subset=cols, how="all")
+    days = pd.to_datetime(sub["date"])
+    rows = [(city_id, model, ts.date(), ts.year) + tuple(_py(v) for v in vals)
+            for ts, vals in zip(days, sub[cols].itertuples(index=False, name=None))]
+    marks = ", ".join(["%s"] * (len(WEATHER_COLS) + 4))
+    updates = ", ".join(f"{c} = VALUES({c})" for c in ["year"] + WEATHER_COLS)
+    return _execute_many([(
+        f"INSERT INTO forecasted_daily_weather (city_id, model_name, date, year, {', '.join(WEATHER_COLS)}) "
+        f"VALUES ({marks}) ON DUPLICATE KEY UPDATE {updates}", rows
+    )])
+
+
+@_db_safe
+def load_forecasted_weather(city_id, models):
+    """Wide frame (date + "<var>__<model>" columns) or None unless every requested model is stored."""
+    marks = ", ".join(["%s"] * len(models))
+    df = _query_df(f"SELECT model_name, date, {', '.join(WEATHER_COLS)} FROM forecasted_daily_weather "
+                   f"WHERE city_id = %s AND model_name IN ({marks}) ORDER BY date", (city_id, *models))
+    if df.empty or set(df["model_name"]) != set(models):
+        return None
+    out = None
+    for model in models:
+        part = df[df["model_name"] == model].drop(columns="model_name")
+        part = part.rename(columns={c: f"{c}__{model}" for c in WEATHER_COLS})
+        out = part if out is None else pd.merge(out, part, on="date", how="outer")
+    out["date"] = pd.to_datetime(out["date"])
+    return out.sort_values("date").reset_index(drop=True)
+
+
+# ---- computed scores (keyed by city + hash of the Score parameters) ----
+@_db_safe
+def save_historical_scores(city_id, score_params, df):
+    h = _config_hash(score_params)
+    days = pd.to_datetime(df["date"])
+    rows = [(city_id, h, ts.date(), ts.year, _py(sc), rs) for ts, sc, rs in zip(days, df["score"], df["reason"])]
+    return _execute_many([_config_statement(score_params), (
+        "INSERT INTO computed_historical_scores (city_id, config_hash, date, year, score, reason) "
+        "VALUES (%s, %s, %s, %s, %s, %s) "
+        "ON DUPLICATE KEY UPDATE year = VALUES(year), score = VALUES(score), reason = VALUES(reason)", rows
+    )])
+
+
+@_db_safe
+def load_historical_scores(city_id, score_params):
+    df = _query_df("SELECT date, score, reason, year FROM computed_historical_scores "
+                   "WHERE city_id = %s AND config_hash = %s ORDER BY date", (city_id, _config_hash(score_params)))
+    if df.empty:
+        return None
+    df["date"] = pd.to_datetime(df["date"])
+    return df
+
+
+@_db_safe
+def save_forecasted_scores(city_id, score_params, model, df):
+    """df has columns date, year, score, reason for a single model."""
+    h = _config_hash(score_params)
+    days = pd.to_datetime(df["date"])
+    rows = [(city_id, h, model, ts.date(), ts.year, _py(sc), rs)
+            for ts, sc, rs in zip(days, df["score"], df["reason"])]
+    return _execute_many([_config_statement(score_params), (
+        "INSERT INTO computed_forecasted_scores (city_id, config_hash, model_name, date, year, score, reason) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+        "ON DUPLICATE KEY UPDATE year = VALUES(year), score = VALUES(score), reason = VALUES(reason)", rows
+    )])
+
+
+@_db_safe
+def load_forecasted_scores(city_id, score_params, models):
+    """Long frame (model_name, date, year, score, reason) or None unless every requested model is stored."""
+    marks = ", ".join(["%s"] * len(models))
+    df = _query_df("SELECT model_name, date, year, score, reason FROM computed_forecasted_scores "
+                   f"WHERE city_id = %s AND config_hash = %s AND model_name IN ({marks}) ORDER BY date",
+                   (city_id, _config_hash(score_params), *models))
+    if df.empty or set(df["model_name"]) != set(models):
+        return None
+    df["date"] = pd.to_datetime(df["date"])
+    return df
+
 
 def build_gemini_prompt(score: Score, additional_preferences=None, disaster_preferences=None):
     params = score.get_all_parameters()

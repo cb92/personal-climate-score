@@ -15,7 +15,7 @@
 
 &nbsp;&nbsp;&nbsp;&nbsp;[Data Visualization](#data-visualization) 
 
-&nbsp;&nbsp;&nbsp;&nbsp;[Caching System](#caching-system)
+&nbsp;&nbsp;&nbsp;&nbsp;[Database Structure](#caching-system)
 
 &nbsp;&nbsp;&nbsp;&nbsp;[AI Integration](#ai-integration)
 
@@ -90,14 +90,94 @@ The app generates multiple interactive charts for each city:
 - **Reason Analysis**: Breakdown of why days received specific scores
 - **Air Quality Trends**: PM2.5 concentration patterns over time
 
-### Caching System
-To improve performance and reduce API calls, the app implements a comprehensive caching system:
-- **Intelligent Cache Management**: Weather data cached locally with city/state/model-specific filenames
-- **Automatic Size Control**: Cache automatically cleaned up when it exceeds 100MB, keeping the most recently accessed files
-- **Cache Directory Tracking**: JSON-based metadata tracking for all cached files including size, access counts, and last access times
-- **Score Calculation Caching**: Score calculations cached based on parameter hashes for faster repeated calculations
-- **Automatic Cache Invalidation**: Cache automatically invalidated when parameters change
-- **Performance Optimization**: Reduces API calls and improves response times for frequently accessed data
+### Database Structure
+To improve performance and reduce API calls, the app uses a MySQL database hosted in Railway. The database structure is as follows:
+
+```mermaid
+erDiagram
+    cities ||--o{ historical_daily_weather : "has"
+    cities ||--o{ historical_hourly_aqi : "has"
+    cities ||--o{ forecasted_daily_weather : "has"
+    cities ||--o{ computed_historical_scores : "has"
+    cities ||--o{ computed_forecasted_scores : "has"
+    score_configurations ||--o{ computed_historical_scores : "configures"
+    score_configurations ||--o{ computed_forecasted_scores : "configures"
+
+    cities {
+        INT city_id PK
+        VARCHAR city_name UK
+        VARCHAR state_name UK
+        DECIMAL latitude
+        DECIMAL longitude
+        VARCHAR timezone
+        INT population
+    }
+
+    historical_daily_weather {
+        BIGINT historical_id PK
+        INT city_id FK, UK
+        DATE date UK
+        FLOAT temperature_2m_max__celsius
+        FLOAT dew_point_2m_min__celsius
+        FLOAT rain_sum__millimetre
+        FLOAT snowfall_sum__centimetre
+        FLOAT cloud_cover_mean__percentage
+        FLOAT wind_speed_10m_mean__kilometres_per_hour
+    }
+
+    historical_hourly_aqi {
+        BIGINT aqi_id PK
+        INT city_id FK, UK
+        DATETIME datetime UK
+        DATE date
+        FLOAT pm2_5__micrograms_per_cubic_metre
+    }
+
+    forecasted_daily_weather {
+        BIGINT forecast_id PK
+        INT city_id FK, UK
+        VARCHAR model_name UK
+        DATE date UK
+        INT year
+        FLOAT temperature_2m_max__celsius
+        FLOAT dew_point_2m_min__celsius
+        FLOAT rain_sum__millimetre
+        FLOAT snowfall_sum__centimetre
+        FLOAT cloud_cover_mean__percentage
+        FLOAT wind_speed_10m_mean__kilometres_per_hour
+    }
+
+    score_configurations {
+        CHAR config_hash PK
+        JSON parameters_json
+        TIME min_time
+        TIME max_time
+        FLOAT scaling_factor
+        FLOAT ideal_temp_min
+        FLOAT ideal_temp_max
+    }
+
+    computed_historical_scores {
+        BIGINT score_id PK
+        INT city_id FK, UK
+        CHAR config_hash FK, UK
+        DATE date UK
+        INT year
+        FLOAT score
+        VARCHAR reason
+    }
+
+    computed_forecasted_scores {
+        BIGINT score_id PK
+        INT city_id FK, UK
+        CHAR config_hash FK, UK
+        VARCHAR model_name UK
+        DATE date UK
+        INT year
+        FLOAT score
+        VARCHAR reason
+    }
+```
 
 ### AI Integration
 The app leverages Google Gemini AI to provide:
@@ -106,7 +186,7 @@ The app leverages Google Gemini AI to provide:
 - **Natural Language Explanations**: Conversational insights about climate suitability
 
 ### User Interface
-Built with Dash and Bootstrap, the interface provides:
+Built and deployed with Streamlit, the interface provides:
 - Intuitive sliders and dropdowns for preference setting
 - Real-time parameter validation
 - Responsive design for different screen sizes
@@ -114,12 +194,12 @@ Built with Dash and Bootstrap, the interface provides:
 
 ## Technical Architecture
 
-- **Frontend**: Dash (Python web framework) with Plotly for interactive visualizations
+- **Frontend**: Streamlit with Altair for interactive visualizations
 - **Backend**: Python with pandas for data processing
 - **Data Sources**: Open-Meteo APIs for weather and climate data
 - **AI**: Google Gemini API for intelligent recommendations
-- **Caching**: Advanced local file-based caching system with automatic size management, access count tracking, and metadata management
-- **Deployment**: Flask server with Bootstrap styling
+- **Database**: MySQL database hosted in Railway
+- **Deployment**: Streamlit Community Cloud
 
 ## Limitations
 
