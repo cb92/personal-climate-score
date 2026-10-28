@@ -5,6 +5,7 @@ numpy
 requests
 dash
 dash-bootstrap-components
+mysql-connector-python
 plotly
 python-dotenv
 google-genai

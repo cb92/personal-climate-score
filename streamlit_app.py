@@ -51,10 +51,10 @@ def gemini(prompt):
 
 
 def analyze(lat, lon, tz, city, state, score):
-    hist_daily, pm, _, _ = get_historical_and_aqi_data(lat, lon, tz, city, state)
-    fc, _ = get_combined_forecasted_data(lat, lon, tz, city, state, models=MODELS)
-    hist, _ = process_historical_for_plotting(hist_daily, score, city=city, state=state)
-    fore, _ = process_combined_forecasted_for_plotting(fc, score, models=MODELS, city=city, state=state)
+    hist_daily, pm = get_historical_and_aqi_data(lat, lon, tz, city, state)
+    fc = get_combined_forecasted_data(lat, lon, tz, city, state, models=MODELS)
+    hist = process_historical_for_plotting(hist_daily, score, city=city, state=state)
+    fore = process_combined_forecasted_for_plotting(fc, score, models=MODELS, city=city, state=state)
     for d in (hist, fore):
         d['date'] = pd.to_datetime(d['date'], errors='coerce')
         d['month'] = d['date'].dt.month

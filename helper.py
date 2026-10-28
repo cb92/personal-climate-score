@@ -155,20 +155,6 @@ def get_unit_name(unit_value):
             return name
     return f"unknown({unit_value})"
 
-
-def get_variable_name(var_value):
-    for name, value in Variable.__dict__.items():
-        if value == var_value and not name.startswith("__"):
-            return name
-    return f"unknown({var_value})"
-
-def hex_to_rgba(hex_color, alpha):
-    """Converts a hex color code to an RGBA string with specified alpha."""
-    hex_color = hex_color.lstrip('#')
-    rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-    return f"rgba({rgb[0]}, {rgb[1]}, {rgb[2]}, {alpha})"
-
-
 def extract_data_from_api_response(timeseries, cols, hourly = True, timezone = 'America/Los_Angeles'):
 	if hourly:
 		datetime_index = pd.date_range(
@@ -214,65 +200,6 @@ def extract_data_from_api_response(timeseries, cols, hourly = True, timezone = '
 def f_to_c(fahrenheit):
 	return (fahrenheit - 32)*5/9
 
-
-def daily_climate_score__hourly(temperature_arr, 
-								dew_point_arr, 
-								rain_arr, 
-								snowfall_arr, 
-								wind_arr, 
-								cloud_cover_arr,
-								score_obj):
-	score = 0
-	reason = "neutral"
-    #this if/elif loop should logically be disjoint
-	if (np.max(temperature_arr) > f_to_c(score_obj.humid_day_max) and np.min(dew_point_arr) > f_to_c(60)):
-		score = score_obj.humid_day_coef
-		reason = "too hot, humid"
-	elif (np.max(temperature_arr) > f_to_c(score_obj.dry_heat_day_min) and np.min(dew_point_arr) <= f_to_c(60)):
-		score = score_obj.dry_heat_day_coef
-		reason = "too hot, dry"
-	elif (np.max(temperature_arr) < f_to_c(score_obj.too_cold_windy__max) and np.mean(wind_arr) > 30):
-		score = score_obj.too_cold_windy__coef
-		reason = "too cold, windy"
-	elif (np.max(temperature_arr) < f_to_c(score_obj.too_cold_still__max) and np.mean(wind_arr) < 30):
-		score = score_obj.too_cold_still__coef
-		reason = "too cold, still"
-	elif (np.max(temperature_arr) > f_to_c(score_obj.ideal_temp__min) and np.max(temperature_arr) < f_to_c(score_obj.ideal_temp__max)):
-		if (np.mean(cloud_cover_arr) < 60 and np.sum(rain_arr) < 2):
-			score = score_obj.ideal_sunny_day__coef
-			reason = "ideal sunny"
-		elif (np.mean(cloud_cover_arr) >=60 and np.sum(rain_arr) < 2):
-			score = score_obj.overcast_dry__coef
-			reason = "ideal overcast"
-	# Precipitation overrides
-	if (np.sum(rain_arr) >= 2 and np.sum(rain_arr) < 10):
-		if reason == 'neutral':
-			score = score_obj.light_rain__coef
-			reason = 'light rain'
-		else:
-			prev_score = score
-			score = np.min([score, score_obj.light_rain__coef])
-			if score == score_obj.light_rain__coef or score < prev_score:
-				reason = "light rain"
-	elif (np.sum(rain_arr) >= 10):
-		if reason == 'neutral':
-			score = score_obj.heavy_rain__coef
-			reason = "heavy rain"
-		else:
-			prev_score = score
-			score = np.min([score, score_obj.heavy_rain__coef])
-			if score == score_obj.heavy_rain__coef or score < prev_score:
-				reason = "heavy rain"
-	elif (np.sum(snowfall_arr) > 1):
-		if reason == 'neutral':
-			score = score_obj.snow_coef
-			reason = "snow"
-		else:
-			prev_score = score
-			score = np.min([score, score_obj.snow_coef])
-			if score == score_obj.snow_coef or score < prev_score:
-				reason = "snow"
-	return (score + 2) * 25, reason
 
 def daily_climate_score__daily(temperature_max, 
 								dew_point_min,
@@ -397,42 +324,6 @@ def get_historical_and_aqi_data(lat, long, city_timezone, city, state, col_names
     return df_historical_weather, df_historical_aqi
 
 
-def get_forecasted_data(lat, long, city_timezone, city, state, model, col_names=None, save_todb=True):
-    if col_names is None:
-        col_names = ["temperature_2m_max", "wind_speed_10m_mean", "dew_point_2m_min", "rain_sum", "cloud_cover_mean", "snowfall_sum"]
-    
-    # Check database first
-    city_id = get_or_create_city_id(city, state, lat, long, city_timezone)
-    if city_id is not None:
-        db_df = load_forecasted_weather(city_id, [model])
-        if db_df is not None:
-            print(f"Loading forecasted data for {city}, {state} with model {model} from database")
-            return db_df
-    
-    print(f"Fetching forecasted data for {city}, {state} with model {model} from API...")
-    openmeteo = openmeteo_requests.Client()
-    url = "https://climate-api.open-meteo.com/v1/climate"
-    params = {
-        "latitude": lat,
-        "longitude": long,
-        "start_date": date.today(),
-        "end_date": date(date.today().year + 7, 12, 31),
-        "models": model,
-        "daily": col_names
-    }
-    responses = openmeteo.weather_api(url, params=params)
-    df_single_model = extract_data_from_api_response(responses[0].Daily(), col_names, hourly=False, timezone=city_timezone)
-    df_single_model.columns = [
-        col if col == 'date' else col + f'__{model}'
-        for col in df_single_model.columns
-    ]
-    
-    # Save to database
-    if save_todb and city_id is not None:
-        save_forecasted_weather(city_id, model, df_single_model)
-    return df_single_model
-
-
 def process_historical_for_plotting(df, climate_score, city=None, state=None):
     # Check database first if city and state are provided
     city_id = get_city_id(city, state) if city and state else None
@@ -468,43 +359,6 @@ def process_historical_for_plotting(df, climate_score, city=None, state=None):
         save_historical_scores(city_id, score_params, score_df)
 
     return score_df
-
-
-def process_forecasted_for_plotting(df, climate_score, model="NICAM16_8S", city=None, state=None):
-    # Check database first if city and state are provided
-    city_id = get_city_id(city, state) if city and state else None
-    score_params = climate_score.get_all_parameters()
-    if city_id is not None:
-        db_df = load_forecasted_scores(city_id, score_params, [model])
-        if db_df is not None:
-            print(f"Loading forecasted score data for {city}, {state} with model {model} from database")
-            db_df = db_df[["date", "score", "reason", "year"]]
-            return db_df, db_df["reason"].tolist()
-    
-    print(f"Processing forecasted data for plotting with model {model}...")
-    df["date"] = df["date"].astype(str)
-    scores_forecasted = []
-    for index, row in df.iterrows():
-        date_val = row['date']
-        score, reason = daily_climate_score__daily(
-            row[f'temperature_2m_max__celsius__{model}'],
-            row[f'dew_point_2m_min__celsius__{model}'],
-            row[f'wind_speed_10m_mean__kilometres_per_hour__{model}'],
-            row[f'cloud_cover_mean__percentage__{model}'],
-            row[f'rain_sum__millimetre__{model}'],
-            row[f'snowfall_sum__centimetre__{model}'],
-            climate_score.scaling_factor,
-            climate_score)
-        scores_forecasted.append((date_val, score, reason))
-    score_df_forecasted = pd.DataFrame(scores_forecasted, columns=["date", "score", "reason"])
-    score_df_forecasted["date"] = pd.to_datetime(score_df_forecasted["date"])
-    score_df_forecasted["year"] = score_df_forecasted["date"].dt.year
-    
-    # Save to database if city and state are provided
-    if city_id is not None:
-        save_forecasted_scores(city_id, score_params, model, score_df_forecasted)
-    
-    return score_df_forecasted
 
 
 def get_combined_forecasted_data(lat, long, city_timezone, city, state, models=None, col_names=None, save_todb=True):
