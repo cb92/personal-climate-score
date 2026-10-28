@@ -29,9 +29,11 @@
 
 
 ## Overview
-The **Personal Climate Score Dashboard** is an interactive web application that helps users compare the climate and environmental conditions of up to three US cities based on their personal weather preferences. It provides personalized climate scoring that takes into account both historical weather patterns and future climate projections, helping users make informed decisions about where they might want to live based on their climate preferences.
+
+The [**Personal Climate Score Dashboard**](https://personal-climate-score.streamlit.app/) is an interactive web application that helps users compare the climate and environmental conditions of up to three US cities based on their personal weather preferences. It provides personalized climate scoring that takes into account both historical weather patterns and future climate projections, helping users make informed decisions about where they might want to live based on their climate preferences.
 
 ## Motivation
+
 This work is motivated by a desire to move beyond broad descriptions of locations and to look at weather conditions through the lens of personal preference. This application organizes several data sources and processes them to enable key use cases: 
 - **Relocation Planning and Decision-making**: Understanding climate differences between potential new cities and finding locations that match individual preferences
 - **Climate Adaptation**: Seeing how weather patterns might change in the future in current location to drive adaptation decisions (like installing heating, cooling, or insulation)
@@ -72,7 +74,7 @@ The app uses a scoring system that evaluates daily weather conditions based on a
 **Weather Condition Preferences:**
 - Light rain, heavy rain, and snow preferences
 - Overcast day preferences
-- Time window weighting (default: 8 AM to 8 PM)
+- Time window weighting (default: 8 AM to 8 PM) to represent the portion of the day when the weather affects you the most
 
 **Scoring Logic:**
 Each day receives a score from 0-100 based on:
@@ -208,20 +210,53 @@ Built and deployed with Streamlit, the interface provides:
 - The app focuses on US cities only
 - Natural disaster risk assessment is qualitative and should be supplemented with additional research
 
-## Setup instructions 
+
+## Setup instructions
+To set this app up on your personal machine rather than using the deployed version, follow these instructions. 
+
 Before setup, do the following:
 - Make sure you have Python 3.x installed
+- Have a MySQL 8.0+ or MariaDB 10.5+ database available (local, or hosted such as Railway). The app stores weather data and computed scores there.
 - If you want to use AI features, get a [Gemini API key](https://ai.google.dev/gemini-api/docs)
 
-To set up this app on your personal machine, run the following command lines from your desired working directory, replacing your-api-key with the Gemini API key you generated above. 
+### 1. Install the app
 ```
 git clone https://github.com/cb92/personal-climate-score
 cd personal-climate-score
 pip install -r requirements.txt
-echo "GEMINI_API_KEY='your-api-key'" > .env
-python app.py
 ```
-Once the app is running, put the link into your browser window (something like `http://127.0.0.1:PORTNUMBER/`) to interact with the app
 
-Note that running this app will cause files to be written to a folder called `cache/` in your working directory. The app includes an intelligent caching system that automatically manages cache size and optimizes performance.
+### 2. Create the database tables
+Create an empty database, then run `setup.sql` against it. For example, with the `mysql` command line client:
+```
+mysql -h your-host -P your-port -u your-user -p your-database < setup.sql
+```
+`setup.sql` is safe to re-run, because every table is created with `IF NOT EXISTS`.
 
+### 3. Configure your environment
+Create a file called `.env` in the project folder with your Gemini API key and database connection details:
+```
+GEMINI_API_KEY='your-api-key'
+RAILWAY_DB_HOST='your-host'
+RAILWAY_DB_PORT='3306'
+RAILWAY_DB_USER='your-user'
+RAILWAY_DB_PASSWORD='your-password'
+RAILWAY_DB_NAME='your-database'
+```
+Never commit `.env` to git. If you don't need the AI features, you can leave out the `GEMINI_API_KEY` line.
+
+### 4. Run the app
+```
+streamlit run streamlit_app.py
+```
+Streamlit will print a local link (usually `http://localhost:8501`) and open it in your browser.
+
+## Data storage
+The app stores everything it fetches or computes in the database defined in `setup.sql`, so repeat requests for the same city are served from the database instead of calling the weather APIs again.
+
+- **Cities:** location metadata (coordinates, timezone) for each city you look up
+- **Historical weather and air quality:** daily weather and hourly PM2.5 history for each city
+- **Forecasts:** daily climate model projections for each city, one row per model per day
+- **Scores:** computed historical and forecasted scores, keyed by city and by a hash of your preference settings. Changing a preference creates a new set of scores and leaves the old ones in place.
+
+Stored data is not refreshed automatically. To force a fresh fetch for a city, delete its row from the `cities` table (the `ON DELETE CASCADE` foreign keys remove its related rows).
