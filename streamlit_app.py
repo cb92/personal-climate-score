@@ -151,7 +151,7 @@ def chart(df, kind, colors, x_label, y_label, rule=None, bands=None):
         layers.append(alt.Chart(pd.DataFrame({'x': [rule], 'label': [f'Forecast begins {rule}']}))
                       .mark_rule(strokeDash=[6, 4], color='#888888', strokeWidth=2)
                       .encode(x=x, tooltip=['label:N']))
-    st.altair_chart(alt.layer(*layers), use_container_width=True)
+    st.altair_chart(alt.layer(*layers), width = 'content')
 
 
 def avg_chart(r):
@@ -239,7 +239,8 @@ with st.sidebar:
     st.subheader("Other Preferences for Places to Live")
     extra = st.text_input("What else matters to you about a place to live?",
                         placeholder="e.g. low cost of living, good state universities, urban, walkable, near ocean")
-    st.caption("Choosing entirely new location/score combinations the tool has not seen before may take up to one minute.")
+    st.caption("Choosing entirely new location/score combinations the tool has not seen before may take up to one minute. If you are hitting the limits of the OpenMeteo API, "
+        "wait a few seconds and click the button below again to continue populating the graphs.")
     run = st.button("Calculate Climate Scores", type="primary")
 
 
@@ -331,7 +332,7 @@ if res['pts']:
         title="Selected Cities"
     )
 
-    st.altair_chart(map_chart, use_container_width=True)
+    st.altair_chart(map_chart, width = 'content')
 
 CHARTS = [
     ("Score Distribution by Year (% of days)",
