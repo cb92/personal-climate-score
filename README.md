@@ -15,7 +15,7 @@
 
 &nbsp;&nbsp;&nbsp;&nbsp;[Data Visualization](#data-visualization) 
 
-&nbsp;&nbsp;&nbsp;&nbsp;[Database Structure](#caching-system)
+&nbsp;&nbsp;&nbsp;&nbsp;[Database Structure](#database-structure)
 
 &nbsp;&nbsp;&nbsp;&nbsp;[AI Integration](#ai-integration)
 
@@ -93,7 +93,7 @@ The app generates multiple interactive charts for each city:
 - **Air Quality Trends**: PM2.5 concentration patterns over time
 
 ### Database Structure
-To improve performance and reduce API calls, the app uses a MySQL database hosted in Railway. The database structure is as follows:
+To improve performance and reduce API calls, the app uses a MySQL database hosted in Railway and serves repeat requests from the database instead of the API. The database structure is reproduced below. Stored data is not refreshed automatically. To force a fresh fetch for a city, delete its row from the `cities` table (the `ON DELETE CASCADE` foreign keys remove its related rows). This might be something I focus on in future work (ie. automatic updating for stale data).
 
 ```mermaid
 erDiagram
@@ -250,13 +250,3 @@ Never commit `.env` to git. If you don't need the AI features, you can leave out
 streamlit run streamlit_app.py
 ```
 Streamlit will print a local link (usually `http://localhost:8501`) and open it in your browser.
-
-## Data storage
-The app stores everything it fetches or computes in the database defined in `setup.sql`, so repeat requests for the same city are served from the database instead of calling the weather APIs again.
-
-- **Cities:** location metadata (coordinates, timezone) for each city you look up
-- **Historical weather and air quality:** daily weather and hourly PM2.5 history for each city
-- **Forecasts:** daily climate model projections for each city, one row per model per day
-- **Scores:** computed historical and forecasted scores, keyed by city and by a hash of your preference settings. Changing a preference creates a new set of scores and leaves the old ones in place.
-
-Stored data is not refreshed automatically. To force a fresh fetch for a city, delete its row from the `cities` table (the `ON DELETE CASCADE` foreign keys remove its related rows).
