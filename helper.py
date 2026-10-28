@@ -345,7 +345,7 @@ def get_city_info(city, state):
     return info['latitude'], info['longitude'], info['timezone'], info.get('population', None)
 
 
-def get_historical_and_aqi_data(lat, long, city_timezone, city, state, col_names=None, save_csv=True):
+def get_historical_and_aqi_data(lat, long, city_timezone, city, state, col_names=None, save_todb=True):
     if col_names is None:
         col_names = [
             "temperature_2m_max", "dew_point_2m_min", "rain_sum", "snowfall_sum", "cloud_cover_mean", "wind_speed_10m_mean"
@@ -357,7 +357,7 @@ def get_historical_and_aqi_data(lat, long, city_timezone, city, state, col_names
         db_pm25 = load_historical_aqi(city_id, city_timezone)
         if db_weather is not None and db_pm25 is not None:
             print(f"Loading historical daily weather and pm2.5 for {city}, {state} from database")
-            return db_weather, db_pm25, None, None
+            return db_weather, db_pm25
 
     print(f"Fetching historical daily weather for {city}, {state} from API...")
     openmeteo = openmeteo_requests.Client()
@@ -390,14 +390,14 @@ def get_historical_and_aqi_data(lat, long, city_timezone, city, state, col_names
     df_historical_aqi = extract_data_from_api_response(responses[0].Hourly(), aqi_col_names, timezone=city_timezone)
 
     # Save to database
-    if save_csv and city_id is not None:
+    if save_todb and city_id is not None:
         save_historical_weather(city_id, df_historical_weather)
         save_historical_aqi(city_id, df_historical_aqi)
 
-    return df_historical_weather, df_historical_aqi, None, None
+    return df_historical_weather, df_historical_aqi
 
 
-def get_forecasted_data(lat, long, city_timezone, city, state, model, col_names=None, save_csv=True):
+def get_forecasted_data(lat, long, city_timezone, city, state, model, col_names=None, save_todb=True):
     if col_names is None:
         col_names = ["temperature_2m_max", "wind_speed_10m_mean", "dew_point_2m_min", "rain_sum", "cloud_cover_mean", "snowfall_sum"]
     
@@ -407,7 +407,7 @@ def get_forecasted_data(lat, long, city_timezone, city, state, model, col_names=
         db_df = load_forecasted_weather(city_id, [model])
         if db_df is not None:
             print(f"Loading forecasted data for {city}, {state} with model {model} from database")
-            return db_df, None
+            return db_df
     
     print(f"Fetching forecasted data for {city}, {state} with model {model} from API...")
     openmeteo = openmeteo_requests.Client()
@@ -428,9 +428,9 @@ def get_forecasted_data(lat, long, city_timezone, city, state, model, col_names=
     ]
     
     # Save to database
-    if save_csv and city_id is not None:
+    if save_todb and city_id is not None:
         save_forecasted_weather(city_id, model, df_single_model)
-    return df_single_model, None
+    return df_single_model
 
 
 def process_historical_for_plotting(df, climate_score, city=None, state=None):
@@ -441,12 +441,11 @@ def process_historical_for_plotting(df, climate_score, city=None, state=None):
         db_df = load_historical_scores(city_id, score_params)
         if db_df is not None:
             print(f"Loading historical score data for {city}, {state} from database")
-            return db_df, db_df["reason"].tolist()
+            return db_df
 
     print("Processing historical daily data for plotting...")
     df["date"] = df["date"].astype(str)
     scores = []
-    reasons = []
     for idx, row in df.iterrows():
         # Use daily scoring function
         score, reason = daily_climate_score__daily(
@@ -460,7 +459,6 @@ def process_historical_for_plotting(df, climate_score, city=None, state=None):
             climate_score
         )
         scores.append((row["date"], score, reason))
-        reasons.append(reason)
     score_df = pd.DataFrame(scores, columns=["date", "score", "reason"])
     score_df["date"] = pd.to_datetime(score_df["date"])
     score_df["year"] = score_df["date"].dt.year
@@ -469,7 +467,7 @@ def process_historical_for_plotting(df, climate_score, city=None, state=None):
     if city_id is not None:
         save_historical_scores(city_id, score_params, score_df)
 
-    return score_df, reasons
+    return score_df
 
 
 def process_forecasted_for_plotting(df, climate_score, model="NICAM16_8S", city=None, state=None):
@@ -486,7 +484,6 @@ def process_forecasted_for_plotting(df, climate_score, model="NICAM16_8S", city=
     print(f"Processing forecasted data for plotting with model {model}...")
     df["date"] = df["date"].astype(str)
     scores_forecasted = []
-    reasons_forecasted = []
     for index, row in df.iterrows():
         date_val = row['date']
         score, reason = daily_climate_score__daily(
@@ -499,7 +496,6 @@ def process_forecasted_for_plotting(df, climate_score, model="NICAM16_8S", city=
             climate_score.scaling_factor,
             climate_score)
         scores_forecasted.append((date_val, score, reason))
-        reasons_forecasted.append(reason)
     score_df_forecasted = pd.DataFrame(scores_forecasted, columns=["date", "score", "reason"])
     score_df_forecasted["date"] = pd.to_datetime(score_df_forecasted["date"])
     score_df_forecasted["year"] = score_df_forecasted["date"].dt.year
@@ -508,10 +504,10 @@ def process_forecasted_for_plotting(df, climate_score, model="NICAM16_8S", city=
     if city_id is not None:
         save_forecasted_scores(city_id, score_params, model, score_df_forecasted)
     
-    return score_df_forecasted, reasons_forecasted
+    return score_df_forecasted
 
 
-def get_combined_forecasted_data(lat, long, city_timezone, city, state, models=None, col_names=None, save_csv=True):
+def get_combined_forecasted_data(lat, long, city_timezone, city, state, models=None, col_names=None, save_todb=True):
     """
     Fetch forecasted data for multiple models and return a combined dataframe.
     
@@ -539,7 +535,7 @@ def get_combined_forecasted_data(lat, long, city_timezone, city, state, models=N
         if db_df is not None:
             db_df['year'] = pd.to_datetime(db_df['date']).dt.year
             print(f"Loading combined forecasted data for {city}, {state} from database")
-            return db_df, None
+            return db_df
     
     print(f"Fetching combined forecasted data for {city}, {state} with models {models} from API...")
     openmeteo = openmeteo_requests.Client()
@@ -575,11 +571,11 @@ def get_combined_forecasted_data(lat, long, city_timezone, city, state, models=N
     combined_df['year'] = pd.to_datetime(combined_df['date']).dt.year
     
     # Save to database
-    if save_csv and city_id is not None:
+    if save_todb and city_id is not None:
         for model in models:
             save_forecasted_weather(city_id, model, combined_df)
     
-    return combined_df, None
+    return combined_df
 
 
 def process_combined_forecasted_for_plotting(df, climate_score, models=None, city=None, state=None):
@@ -594,7 +590,6 @@ def process_combined_forecasted_for_plotting(df, climate_score, models=None, cit
     
     Returns:
         processed_df: DataFrame with date, year, and model-specific score/reason columns
-        all_reasons: list of all unique reasons across all models
     """
     if models is None:
         models = ["EC_Earth3P_HR", "MRI_AGCM3_2_S", "NICAM16_8S"]
@@ -611,14 +606,12 @@ def process_combined_forecasted_for_plotting(df, climate_score, models=None, cit
                 by_date = db_long[db_long['model_name'] == model].set_index('date')
                 combined_db_df[f'score_{model}'] = combined_db_df['date'].map(by_date['score'])
                 combined_db_df[f'reason_{model}'] = combined_db_df['date'].map(by_date['reason'])
-            all_reasons = list(set(db_long['reason'].dropna().unique().tolist()))
-            return combined_db_df, all_reasons
+            return combined_db_df
     
     print(f"Processing combined forecasted data for plotting with models {models}...")
     
     # Initialize result dataframe with date and year
     result_df = df[['date', 'year']].copy()
-    all_reasons = []
     
     # Process each model
     for model in models:
@@ -639,15 +632,11 @@ def process_combined_forecasted_for_plotting(df, climate_score, models=None, cit
             )
             scores_model.append(score)
             reasons_model.append(reason)
-            all_reasons.append(reason)
         
         # Add model-specific columns
         result_df[f'score_{model}'] = scores_model
         result_df[f'reason_{model}'] = reasons_model
-    
-    # Remove duplicates from all_reasons
-    all_reasons = list(set(all_reasons))
-    
+        
     # Save to database if city and state are provided
     if city_id is not None:
         for model in models:
@@ -657,7 +646,7 @@ def process_combined_forecasted_for_plotting(df, climate_score, models=None, cit
             })
             save_forecasted_scores(city_id, score_params, model, model_df)
     
-    return result_df, all_reasons
+    return result_df
 
 
 ####### Database access (schema in setup.sql)
